@@ -1,0 +1,37 @@
+[Unit]
+Description=Asistencia Modelo Backend (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=asistenciamodelo
+Group=www-data
+WorkingDirectory=__APP_ROOT__/backend
+EnvironmentFile=/etc/asistenciamodelo/backend.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__APP_ROOT__/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8184 --workers 2 --timeout-keep-alive 10 --limit-concurrency 200
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryAccounting=true
+CPUAccounting=true
+TasksAccounting=true
+MemoryHigh=512M
+MemoryMax=768M
+CPUQuota=150%
+TasksMax=256
+LimitNOFILE=8192
+ReadWritePaths=__APP_ROOT__/backend /tmp
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,37 @@
+[Unit]
+Description=Asistencia Modelo Frontend (Next.js)
+After=network-online.target asistenciamodelo-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=asistenciamodelo
+Group=www-data
+WorkingDirectory=__APP_ROOT__/frontend
+EnvironmentFile=/etc/asistenciamodelo/frontend.env
+Environment=NODE_OPTIONS=--max-old-space-size=512
+ExecStart=/usr/bin/env npm run start -- --hostname 127.0.0.1 --port 3101
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryAccounting=true
+CPUAccounting=true
+TasksAccounting=true
+MemoryHigh=512M
+MemoryMax=768M
+CPUQuota=100%
+TasksMax=256
+LimitNOFILE=8192
+ReadWritePaths=__APP_ROOT__/frontend/.next /tmp
+
+[Install]
+WantedBy=multi-user.target

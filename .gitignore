@@ -1,0 +1,30 @@
+# Node
+node_modules/
+.npm/
+.next/
+frontend/.next/
+frontend/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+backend/.venv/
+venv/
+.env
+backend/.env
+
+# Editor
+.vscode/
+.DS_Store
+.idea/
+
+# Build artifacts
+coverage/
+dist/
+*.egg-info/
+
+# Misc
+*.log

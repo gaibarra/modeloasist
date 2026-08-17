@@ -1,0 +1,40 @@
+version: "3.10"
+services:
+  postgres:
+    image: postgres:16
+    container_name: asistencia-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: asistencia
+      POSTGRES_USER: gaibarra
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+  backend:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    environment:
+      DATABASE_URL: postgresql+psycopg://gaibarra:change-me@postgres:5432/asistencia
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+    volumes:
+      - ./frontend:/app
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+volumes:
+  postgres_data:
