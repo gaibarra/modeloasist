@@ -5,6 +5,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { PeriodDateRangeFields } from "@/components/period-date-range-fields";
 import { StaffIndividualFilters } from "@/components/staff-individual-filters";
 import { StaffPrintLauncher } from "@/components/staff-print-launcher";
+import { StaffScheduleEditor } from "@/components/staff-schedule-editor";
 import {
   DepartmentSummary,
   StaffDefaultWeek,
@@ -24,6 +25,7 @@ type StaffSearchParams = {
   start_date?: string;
   end_date?: string;
   employee_id?: string;
+  weeks?: string;
 };
 
 type StaffPageProps = {
@@ -146,9 +148,9 @@ async function fetchDepartmentEmployees(departmentId: number) {
   return fetchBackendJson<StaffDepartmentEmployeeSummary[]>(`/staff/mobile/employees?department_id=${departmentId}`);
 }
 
-async function fetchEmployeeYearSummary(departmentId: number, employeeId: number) {
+async function fetchEmployeeYearSummary(departmentId: number, employeeId: number, weeks: number) {
   return fetchBackendJson<StaffEmployeeYearSummary>(
-    `/staff/mobile/employee-year?department_id=${departmentId}&employee_id=${employeeId}`,
+    `/staff/mobile/employee-year?department_id=${departmentId}&employee_id=${employeeId}&weeks=${weeks}`,
   );
 }
 
@@ -371,6 +373,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
   const selectedDepartment = departments.find((department) => department.id === requestedDepartmentId) ?? departments[0] ?? null;
   const selectedDepartmentId = selectedDepartment?.id ?? 0;
   const selectedEmployeeId = Number(params.employee_id ?? 0) || 0;
+  const selectedWeeks = [2, 3, 4, 6, 8, 12].includes(Number(params.weeks)) ? Number(params.weeks) : 4;
   const startDate = params.start_date ?? defaultRange.startDate;
   const endDate = params.end_date ?? defaultRange.endDate;
 
@@ -383,7 +386,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
     : [];
   const hasSelectedEmployee = departmentEmployees.some((employee) => employee.id === selectedEmployeeId);
   const employeeYearSummary = view === "individual" && selectedDepartmentId > 0 && hasSelectedEmployee
-    ? await fetchEmployeeYearSummary(selectedDepartmentId, selectedEmployeeId)
+    ? await fetchEmployeeYearSummary(selectedDepartmentId, selectedEmployeeId, selectedWeeks)
     : null;
   const weekdayScheduleSummaries = employeeYearSummary ? buildWeekdayScheduleSummaries(employeeYearSummary) : [];
   const absenceDays = employeeYearSummary ? countAbsenceDays(employeeYearSummary) : 0;
@@ -577,6 +580,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                 selectedDepartmentId={selectedDepartmentId}
                 selectedEmployeeId={hasSelectedEmployee ? selectedEmployeeId : null}
                 departmentEmployees={departmentEmployees}
+                selectedWeeks={selectedWeeks}
               />
 
               <div className="alert-info mt-4">
@@ -723,6 +727,7 @@ function PeriodAttendanceRow({ row }: { row: StaffMobilePeriodRow }) {
           <SummaryBadge label="Retardos" value={String(rowLateDays)} />
           <SummaryBadge label="Faltas" value={String(rowAbsenceDays)} />
           <SummaryBadge label="Eventos" value={String(row.total_events)} />
+          <StaffScheduleEditor employeeId={row.employee_id} employeeName={row.employee_name} departmentId={row.department_id} />
         </div>
       </div>
 

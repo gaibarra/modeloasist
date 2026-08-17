@@ -18,6 +18,7 @@ from app.models.employee import Employee
 from app.models.inferred_schedule import InferredSchedule
 from app.models.schedule import Schedule
 from app.models.staff_access import Department, EmployeeDepartment
+from app.models.staff_schedule import StaffSemesterSchedule, StaffSemesterScheduleInterval
 from app.services.department_normalization import derive_department_campus
 
 REPORT_YEAR = 2026
@@ -904,7 +905,7 @@ class AnalyticsService:
             return []
 
         employee_ids_for_schedule = [int(row.employee_id) for row in rows]
-        schedule_interval_map = self._normalized_schedule_interval_map(employee_ids_for_schedule)
+        schedule_interval_map = self._resolved_schedule_interval_map(employee_ids_for_schedule, target_date)
 
         payload: list[StaffDailyAttendanceRow] = []
         for row in rows:
@@ -1009,6 +1010,10 @@ class AnalyticsService:
         schedule_interval_map = self._normalized_schedule_interval_map(employee_id_list)
 
         all_dates = _daterange(period_start, period_end)
+        resolved_schedule_maps = {
+            current_date: self._resolved_schedule_interval_map(employee_id_list, current_date, fallback=schedule_interval_map)
+            for current_date in all_dates
+        }
         payload: list[StaffPeriodAttendanceRow] = []
         for row in employee_rows:
             day_payload: list[StaffPeriodAttendanceDay] = []
@@ -1016,7 +1021,7 @@ class AnalyticsService:
             active_days = 0
             for current_date in all_dates:
                 first_event, last_event, total_events = event_map.get((int(row.employee_id), current_date), (None, None, 0))
-                intervals = schedule_interval_map.get((int(row.employee_id), current_date.weekday()), [])
+                intervals = resolved_schedule_maps[current_date].get((int(row.employee_id), current_date.weekday()), [])
                 scheduled_start, scheduled_end = _schedule_bounds(intervals)
                 entry_event, exit_event, entry_event_inferred, exit_event_inferred = _resolve_entry_exit_events(
                     first_event=first_event,
@@ -1092,6 +1097,35 @@ class AnalyticsService:
                 continue
             grouped[(int(employee_id), weekday)].append((start_time, end_time))
         return {key: _merge_schedule_intervals(intervals) for key, intervals in grouped.items()}
+
+    def _resolved_schedule_interval_map(self, employee_ids: Iterable[int], target_date: date, *, fallback=None) -> dict[tuple[int, int], list[StaffScheduleInterval]]:
+        """Prefer staff-maintained semester schedules for the date being evaluated."""
+        ids = [int(employee_id) for employee_id in employee_ids if employee_id]
+        base = dict(fallback) if fallback is not None else self._normalized_schedule_interval_map(ids)
+        if not ids:
+            return base
+        semester = 1 if target_date.month <= 6 else 2 if target_date.month >= 8 else None
+        if semester is None:
+            return base
+        profiles = self._db.execute(
+            select(StaffSemesterSchedule.id, StaffSemesterSchedule.employee_id)
+            .where(StaffSemesterSchedule.employee_id.in_(ids))
+            .where(StaffSemesterSchedule.academic_year == target_date.year)
+            .where(StaffSemesterSchedule.semester == semester)
+        ).all()
+        if not profiles:
+            return base
+        profile_ids = [int(row.id) for row in profiles]
+        manual_ids = {int(row.employee_id) for row in profiles}
+        for employee_id in manual_ids:
+            for weekday in range(7):
+                base.pop((employee_id, weekday), None)
+        rows = self._db.execute(select(StaffSemesterSchedule.employee_id, StaffSemesterScheduleInterval.weekday, StaffSemesterScheduleInterval.start, StaffSemesterScheduleInterval.end).join(StaffSemesterScheduleInterval).where(StaffSemesterSchedule.id.in_(profile_ids))).all()
+        grouped: dict[tuple[int, int], list[tuple[time, time]]] = defaultdict(list)
+        for employee_id, weekday, start, end in rows:
+            grouped[(int(employee_id), int(weekday))].append((start, end))
+        base.update({key: _merge_schedule_intervals(value) for key, value in grouped.items()})
+        return base
 
     def _build_top_employees(
         self,

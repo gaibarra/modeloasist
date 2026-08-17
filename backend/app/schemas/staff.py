@@ -44,6 +44,28 @@ class StaffScheduleInterval(BaseModel):
     end: time
 
 
+class StaffSemesterScheduleDay(BaseModel):
+    weekday: int = Field(ge=0, le=6)
+    intervals: list[StaffScheduleInterval] = []
+
+
+class StaffSemesterScheduleResponse(BaseModel):
+    employee_id: int
+    department_id: int
+    academic_year: int
+    semester: int
+    is_manual: bool
+    copied_from_academic_year: int | None = None
+    copied_from_semester: int | None = None
+    days: list[StaffSemesterScheduleDay]
+
+
+class StaffSemesterScheduleUpdateRequest(BaseModel):
+    academic_year: int = Field(ge=2000, le=2100)
+    semester: int = Field(ge=1, le=2)
+    days: list[StaffSemesterScheduleDay]
+
+
 class StaffMobilePeriodDay(BaseModel):
     date: date
     first_event: time | None = None

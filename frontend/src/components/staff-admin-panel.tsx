@@ -499,6 +499,7 @@ function StaffUserCard({
   onSave: (staffUserId: number, departmentIds: number[]) => Promise<void>;
 }) {
   const [selectedDepartments, setSelectedDepartments] = useState<number[]>(user.departments.map((department) => department.id));
+  const [isDepartmentEditorOpen, setIsDepartmentEditorOpen] = useState(false);
 
   return (
     <article className="surface-muted p-4">
@@ -511,41 +512,50 @@ function StaffUserCard({
           </p>
         </div>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {departments.map((department) => {
-          const checked = selectedDepartments.includes(department.id);
-          return (
-            <label key={`${user.id}-${department.id}`} className="surface-card flex items-start gap-3 bg-white px-4 py-3 text-sm shadow-none">
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={(event) =>
-                  setSelectedDepartments((current) =>
-                    event.target.checked
-                      ? [...current, department.id].sort((a, b) => a - b)
-                      : current.filter((id) => id !== department.id),
-                  )
-                }
-                disabled={saving || user.is_superadmin}
-              />
-              <span>
-                <span className="block font-medium text-foreground">{department.name}</span>
-                <span className="text-xs text-(--muted)">{department.campus ?? "Sin campus"}</span>
-              </span>
-            </label>
-          );
-        })}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+        <p className="text-sm text-(--muted)">
+          {user.is_superadmin ? "Acceso a todos los departamentos" : `${selectedDepartments.length} departamento${selectedDepartments.length === 1 ? "" : "s"} asignado${selectedDepartments.length === 1 ? "" : "s"}`}
+        </p>
+        {!user.is_superadmin ? (
+          <button type="button" className="secondary-button px-4 py-2 text-sm" onClick={() => setIsDepartmentEditorOpen((current) => !current)} aria-expanded={isDepartmentEditorOpen}>
+            {isDepartmentEditorOpen ? "Ocultar departamentos" : "Ver departamentos"}
+          </button>
+        ) : null}
       </div>
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={() => onSave(user.id, selectedDepartments)}
-          disabled={saving || user.is_superadmin || departments.length === 0}
-          className="secondary-button disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {user.is_superadmin ? "Scope total" : saving ? "Guardando..." : "Guardar departamentos"}
-        </button>
-      </div>
+      {isDepartmentEditorOpen ? (
+        <div className="mt-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {departments.map((department) => {
+              const checked = selectedDepartments.includes(department.id);
+              return (
+                <label key={`${user.id}-${department.id}`} className="surface-card flex items-start gap-3 bg-white px-4 py-3 text-sm shadow-none">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) =>
+                      setSelectedDepartments((current) =>
+                        event.target.checked
+                          ? [...current, department.id].sort((a, b) => a - b)
+                          : current.filter((id) => id !== department.id),
+                      )
+                    }
+                    disabled={saving}
+                  />
+                  <span>
+                    <span className="block font-medium text-foreground">{department.name}</span>
+                    <span className="text-xs text-(--muted)">{department.campus ?? "Sin campus"}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button type="button" onClick={() => onSave(user.id, selectedDepartments)} disabled={saving || departments.length === 0} className="secondary-button disabled:cursor-not-allowed disabled:opacity-60">
+              {saving ? "Guardando..." : "Guardar departamentos"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }

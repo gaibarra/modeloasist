@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models import employee_credential  # noqa: F401
 from app.models import staff_access  # noqa: F401
+from app.models import staff_schedule  # noqa: F401
 
 
 engine = create_engine(

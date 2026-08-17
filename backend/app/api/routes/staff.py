@@ -18,9 +18,11 @@ from app.dependencies.auth import (
 )
 from app.dependencies.services import get_analytics_service, get_attendance_import_service
 from app.models.employee import Employee
+from app.models.schedule import Schedule
 from app.models.attendance_event import AttendanceEvent
 from app.models.attendance_import_batch import AttendanceImportBatch
 from app.models.staff_access import Department, EmployeeDepartment, StaffDepartmentScope, StaffUser
+from app.models.staff_schedule import StaffSemesterSchedule, StaffSemesterScheduleInterval
 from app.schemas.staff import (
     AttendanceImportBatchSummary,
     AttendanceImportResult,
@@ -34,6 +36,9 @@ from app.schemas.staff import (
     StaffMobilePeriodDay,
     StaffMobilePeriodRow,
     StaffScheduleInterval,
+    StaffSemesterScheduleDay,
+    StaffSemesterScheduleResponse,
+    StaffSemesterScheduleUpdateRequest,
     StaffUserCreateRequest,
     StaffUserSummary,
 )
@@ -43,6 +48,52 @@ from app.services.attendance_import import AttendanceImportService
 from app.services.analytics import AnalyticsService, REPORT_YEAR, REPORT_YEAR_END, REPORT_YEAR_START
 
 router = APIRouter(prefix="/staff", tags=["staff"])
+
+
+@router.get("/schedules", response_model=StaffSemesterScheduleResponse)
+def get_staff_semester_schedule(department_id: int, employee_id: int, academic_year: int, semester: int, actor: AuthenticatedActor = Depends(require_staff_actor), db: Session = Depends(get_db)) -> StaffSemesterScheduleResponse:
+    _require_staff_schema(db)
+    _validate_semester(academic_year, semester)
+    _require_employee_in_department(db, employee_id, department_id, actor)
+    schedule = _get_semester_schedule(db, employee_id, academic_year, semester)
+    previous = None if schedule is not None else _get_previous_semester_schedule(db, employee_id, academic_year, semester)
+    if schedule is None and previous is None:
+        legacy_days = _legacy_schedule_days(db, employee_id)
+        if legacy_days:
+            return StaffSemesterScheduleResponse(
+                employee_id=employee_id,
+                department_id=department_id,
+                academic_year=academic_year,
+                semester=semester,
+                is_manual=False,
+                copied_from_academic_year=2026,
+                copied_from_semester=1,
+                days=legacy_days,
+            )
+    return _to_semester_schedule_response(schedule or previous, employee_id, department_id, academic_year, semester, copied_from=previous if schedule is None else None)
+
+
+@router.put("/schedules", response_model=StaffSemesterScheduleResponse)
+def replace_staff_semester_schedule(department_id: int, employee_id: int, payload: StaffSemesterScheduleUpdateRequest, actor: AuthenticatedActor = Depends(require_staff_actor), db: Session = Depends(get_db)) -> StaffSemesterScheduleResponse:
+    _require_staff_schema(db)
+    _validate_semester(payload.academic_year, payload.semester)
+    _require_employee_in_department(db, employee_id, department_id, actor)
+    _validate_schedule_days(payload.days)
+    schedule = _get_semester_schedule(db, employee_id, payload.academic_year, payload.semester)
+    if schedule is None:
+        schedule = StaffSemesterSchedule(employee_id=employee_id, academic_year=payload.academic_year, semester=payload.semester, updated_by_staff_user_id=actor.staff.id if actor.staff else None)
+        db.add(schedule)
+        db.flush()
+    else:
+        schedule.updated_by_staff_user_id = actor.staff.id if actor.staff else None
+        schedule.intervals.clear()
+        db.flush()
+    for day in payload.days:
+        for interval in day.intervals:
+            schedule.intervals.append(StaffSemesterScheduleInterval(weekday=day.weekday, start=interval.start, end=interval.end))
+    db.commit()
+    db.refresh(schedule)
+    return _to_semester_schedule_response(schedule, employee_id, department_id, payload.academic_year, payload.semester)
 
 
 @router.get("/mobile/default-week", response_model=StaffDefaultWeek)
@@ -307,6 +358,7 @@ def list_staff_department_employees(
 def get_staff_employee_year_summary(
     department_id: int,
     employee_id: int,
+    weeks: int = 4,
     actor: AuthenticatedActor = Depends(require_staff_actor),
     analytics: AnalyticsService = Depends(get_analytics_service),
     db: Session = Depends(get_db),
@@ -315,6 +367,8 @@ def get_staff_employee_year_summary(
     _require_staff_department_access(actor=actor, department_id=department_id)
     if employee_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="employee_id inválido")
+    if weeks not in {2, 3, 4, 6, 8, 12}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="weeks debe ser 2, 3, 4, 6, 8 o 12")
 
     employee_row = db.execute(
         select(
@@ -337,8 +391,9 @@ def get_staff_employee_year_summary(
     report_window_end = min(_resolve_previous_week_sunday(date.today()), REPORT_YEAR_END)
     if report_window_end < REPORT_YEAR_START:
         report_window_end = REPORT_YEAR_START
+    window_start = max(REPORT_YEAR_START, report_window_end - timedelta(days=weeks * 7 - 1))
     annual_rows = analytics.staff_period_attendance(
-        period_start=REPORT_YEAR_START,
+        period_start=window_start,
         period_end=report_window_end,
         department_id=department_id,
         employee_ids=[employee_id],
@@ -356,7 +411,7 @@ def get_staff_employee_year_summary(
         department_id=int(employee_row.department_id),
         department_name=employee_row.department_name,
         report_year=REPORT_YEAR,
-        window_start=REPORT_YEAR_START,
+        window_start=window_start,
         window_end=report_window_end,
         total_days=annual_row.active_days,
         late_days=sum(1 for day in annual_row.days if day.status == "late"),
@@ -435,6 +490,68 @@ def _require_staff_department_access(*, actor: AuthenticatedActor, department_id
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="department_id inválido")
     if not actor.can_access_department(department_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes acceso a este departamento")
+
+
+def _validate_semester(academic_year: int, semester: int) -> None:
+    if not 2000 <= academic_year <= 2100 or semester not in {1, 2}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Periodo semestral inválido")
+
+
+def _require_employee_in_department(db: Session, employee_id: int, department_id: int, actor: AuthenticatedActor) -> None:
+    _require_staff_department_access(actor=actor, department_id=department_id)
+    if employee_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="employee_id inválido")
+    exists = db.execute(select(EmployeeDepartment.employee_id).where(EmployeeDepartment.employee_id == employee_id).where(EmployeeDepartment.department_id == department_id)).first()
+    if exists is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Colaborador no encontrado en este departamento")
+
+
+def _get_semester_schedule(db: Session, employee_id: int, academic_year: int, semester: int) -> StaffSemesterSchedule | None:
+    return db.query(StaffSemesterSchedule).options(selectinload(StaffSemesterSchedule.intervals)).filter(
+        StaffSemesterSchedule.employee_id == employee_id,
+        StaffSemesterSchedule.academic_year == academic_year,
+        StaffSemesterSchedule.semester == semester,
+    ).first()
+
+
+def _get_previous_semester_schedule(db: Session, employee_id: int, academic_year: int, semester: int) -> StaffSemesterSchedule | None:
+    return db.query(StaffSemesterSchedule).options(selectinload(StaffSemesterSchedule.intervals)).filter(
+        StaffSemesterSchedule.employee_id == employee_id,
+        (StaffSemesterSchedule.academic_year < academic_year) | ((StaffSemesterSchedule.academic_year == academic_year) & (StaffSemesterSchedule.semester < semester)),
+    ).order_by(StaffSemesterSchedule.academic_year.desc(), StaffSemesterSchedule.semester.desc()).first()
+
+
+def _legacy_schedule_days(db: Session, employee_id: int) -> list[StaffSemesterScheduleDay]:
+    weekday_by_name = {"Lunes": 0, "Martes": 1, "Miércoles": 2, "Jueves": 3, "Viernes": 4, "Sábado": 5, "Domingo": 6}
+    grouped: dict[int, set[tuple[object, object]]] = {}
+    for day_name, start, end in db.execute(select(Schedule.dia_letra, Schedule.inicio, Schedule.fin).where(Schedule.employee_id == employee_id)):
+        weekday = weekday_by_name.get(day_name or "")
+        if weekday is not None:
+            grouped.setdefault(weekday, set()).add((start, end))
+    return [StaffSemesterScheduleDay(weekday=weekday, intervals=[StaffScheduleInterval(start=start, end=end) for start, end in sorted(grouped.get(weekday, set()))]) for weekday in range(7)] if grouped else []
+
+
+def _to_semester_schedule_response(schedule, employee_id: int, department_id: int, academic_year: int, semester: int, copied_from=None) -> StaffSemesterScheduleResponse:
+    grouped: dict[int, set[tuple[object, object]]] = {}
+    if schedule is not None:
+        for interval in schedule.intervals:
+            grouped.setdefault(interval.weekday, set()).add((interval.start, interval.end))
+    return StaffSemesterScheduleResponse(employee_id=employee_id, department_id=department_id, academic_year=academic_year, semester=semester, is_manual=schedule is not None and copied_from is None, copied_from_academic_year=copied_from.academic_year if copied_from is not None else None, copied_from_semester=copied_from.semester if copied_from is not None else None, days=[StaffSemesterScheduleDay(weekday=weekday, intervals=[StaffScheduleInterval(start=start, end=end) for start, end in sorted(grouped.get(weekday, set()))]) for weekday in range(7)])
+
+
+def _validate_schedule_days(days: list[StaffSemesterScheduleDay]) -> None:
+    seen_days: set[int] = set()
+    for day in days:
+        if day.weekday in seen_days:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Cada día solo puede enviarse una vez")
+        seen_days.add(day.weekday)
+        previous_end = None
+        for interval in sorted(day.intervals, key=lambda value: value.start):
+            if interval.start >= interval.end:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La hora de inicio debe ser anterior a la hora de fin")
+            if previous_end is not None and interval.start < previous_end:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Los bloques de un día no pueden traslaparse")
+            previous_end = interval.end
 
 
 def _resolve_week_period(*, start_date: date | None, end_date: date | None) -> tuple[date, date]:

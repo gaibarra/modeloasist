@@ -163,6 +163,18 @@ export type StaffScheduleInterval = {
   end: string;
 };
 
+export type StaffSemesterScheduleDay = { weekday: number; intervals: StaffScheduleInterval[] };
+export type StaffSemesterSchedule = {
+  employee_id: number;
+  department_id: number;
+  academic_year: number;
+  semester: number;
+  is_manual: boolean;
+  copied_from_academic_year: number | null;
+  copied_from_semester: number | null;
+  days: StaffSemesterScheduleDay[];
+};
+
 export type StaffEmployeeYearWeekDay = {
   date: string;
   first_event: string | null;

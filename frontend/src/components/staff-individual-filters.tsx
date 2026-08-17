@@ -11,6 +11,7 @@ type StaffIndividualFiltersProps = {
   selectedDepartmentId: number;
   selectedEmployeeId: number | null;
   departmentEmployees: StaffDepartmentEmployeeSummary[];
+  selectedWeeks: number;
 };
 
 function buildIndividualHref(
@@ -18,11 +19,13 @@ function buildIndividualHref(
   searchParams: URLSearchParams,
   departmentId: string,
   employeeId?: string,
+  weeks?: string,
 ) {
   const nextSearchParams = new URLSearchParams(searchParams.toString());
 
   nextSearchParams.set("view", "individual");
   nextSearchParams.set("department_id", departmentId);
+  if (weeks) nextSearchParams.set("weeks", weeks);
 
   if (employeeId && employeeId.trim()) {
     nextSearchParams.set("employee_id", employeeId);
@@ -39,6 +42,7 @@ export function StaffIndividualFilters({
   selectedDepartmentId,
   selectedEmployeeId,
   departmentEmployees,
+  selectedWeeks,
 }: StaffIndividualFiltersProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -51,7 +55,7 @@ export function StaffIndividualFilters({
     }
 
     window.location.assign(
-      buildIndividualHref(pathname, new URLSearchParams(searchParams.toString()), nextDepartmentId),
+      buildIndividualHref(pathname, new URLSearchParams(searchParams.toString()), nextDepartmentId, undefined, String(selectedWeeks)),
     );
   };
 
@@ -61,14 +65,15 @@ export function StaffIndividualFilters({
     const formData = new FormData(event.currentTarget);
     const departmentId = String(formData.get("department_id") ?? "");
     const employeeId = String(formData.get("employee_id") ?? "");
+    const weeks = String(formData.get("weeks") ?? "4");
 
     window.location.assign(
-      buildIndividualHref(pathname, new URLSearchParams(searchParams.toString()), departmentId, employeeId),
+      buildIndividualHref(pathname, new URLSearchParams(searchParams.toString()), departmentId, employeeId, weeks),
     );
   };
 
   return (
-    <form className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={handleSubmit}>
+    <form className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_180px_auto]" onSubmit={handleSubmit}>
       <input type="hidden" name="view" value="individual" />
       <label className="space-y-2 text-sm font-medium text-foreground">
         Departamento
@@ -93,6 +98,12 @@ export function StaffIndividualFilters({
         selectedEmployeeId={selectedEmployeeId}
         placeholder="Busca por nombre, correo o campus"
       />
+      <label className="space-y-2 text-sm font-medium text-foreground">
+        Ventana de reporte
+        <select name="weeks" defaultValue={String(selectedWeeks)} className="field-input">
+          {[2, 3, 4, 6, 8, 12].map((weeks) => <option key={weeks} value={weeks}>Últimas {weeks} semanas</option>)}
+        </select>
+      </label>
       <button
         type="submit"
         className="primary-button mt-auto px-5 py-3 text-sm"

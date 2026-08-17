@@ -20,6 +20,7 @@ type StaffPrintPageProps = {
     start_date?: string;
     end_date?: string;
     employee_id?: string;
+    weeks?: string;
   }>;
 };
 
@@ -39,6 +40,13 @@ const WEEKDAY_COLUMNS = [
   { index: 5, label: "Sáb" },
   { index: 6, label: "Dom" },
 ];
+const formatWeekdayDate = (periodStart: string, weekdayIndex: number) => {
+  const start = parseLocalDate(periodStart);
+  if (!start) return null;
+  const value = new Date(start);
+  value.setDate(start.getDate() + weekdayIndex);
+  return value.toLocaleDateString("es-MX", { day: "2-digit", month: "short" }).replace(".", "").toUpperCase();
+};
 function parseLocalDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) {
@@ -107,11 +115,11 @@ const formatStatus = (value: StaffMobilePeriodDay["status"]) => {
     case "on_time":
       return { label: "A tiempo", className: "print-chip print-chip--success" };
     case "late":
-      return { label: "Retardo", className: "print-chip print-chip--danger" };
+      return { label: "Retardo", className: "print-chip print-chip--warning" };
     case "absence":
       return { label: "Falta", className: "print-chip print-chip--danger" };
     case "left_early":
-      return { label: "Salida anticipada", className: "print-chip print-chip--danger" };
+      return { label: "Salida anticipada", className: "print-chip print-chip--warning" };
     case "no_schedule":
       return { label: "Sin horario", className: "print-chip print-chip--info" };
     default:
@@ -119,8 +127,8 @@ const formatStatus = (value: StaffMobilePeriodDay["status"]) => {
   }
 };
 
-function isIncidentStatus(value: StaffMobilePeriodDay["status"] | StaffEmployeeYearWeekDay["status"]) {
-  return value === "late" || value === "left_early" || value === "absence";
+function isAbsenceStatus(value: StaffMobilePeriodDay["status"] | StaffEmployeeYearWeekDay["status"]) {
+  return value === "absence";
 }
 
 function formatScheduleRange(start: string | null, end: string | null) {
@@ -202,9 +210,9 @@ async function fetchDepartmentEmployees(departmentId: number) {
   return fetchBackendJson<StaffDepartmentEmployeeSummary[]>(`/staff/mobile/employees?department_id=${departmentId}`);
 }
 
-async function fetchEmployeeYearSummary(departmentId: number, employeeId: number) {
+async function fetchEmployeeYearSummary(departmentId: number, employeeId: number, weeks: number) {
   return fetchBackendJson<StaffEmployeeYearSummary>(
-    `/staff/mobile/employee-year?department_id=${departmentId}&employee_id=${employeeId}`,
+    `/staff/mobile/employee-year?department_id=${departmentId}&employee_id=${employeeId}&weeks=${weeks}`,
   );
 }
 
@@ -218,6 +226,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
   const selectedDepartmentId = Number(params.department_id ?? defaultDepartmentId ?? 0) || 0;
   const selectedDepartment = departments.find((department) => department.id === selectedDepartmentId) ?? null;
   const selectedEmployeeId = Number(params.employee_id ?? 0) || 0;
+  const selectedWeeks = [2, 3, 4, 6, 8, 12].includes(Number(params.weeks)) ? Number(params.weeks) : 4;
   const startDate = params.start_date ?? defaultRange.startDate;
   const endDate = params.end_date ?? defaultRange.endDate;
   const validationError = validatePeriodRange(startDate, endDate);
@@ -231,7 +240,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
     : [];
   const hasSelectedEmployee = departmentEmployees.some((employee) => employee.id === selectedEmployeeId);
   const employeeYearSummary = view === "individual" && selectedDepartmentId > 0 && hasSelectedEmployee
-    ? await fetchEmployeeYearSummary(selectedDepartmentId, selectedEmployeeId)
+    ? await fetchEmployeeYearSummary(selectedDepartmentId, selectedEmployeeId, selectedWeeks)
     : null;
   const absenceDays = employeeYearSummary ? countAbsenceDays(employeeYearSummary) : 0;
 
@@ -242,7 +251,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
   const totalAbsenceDays = rows.reduce((sum, row) => sum + countAbsenceStatuses(row.days), 0);
 
   return (
-    <main className="min-h-screen bg-(--page-background) px-4 py-6 text-foreground sm:px-6">
+    <main className="print-report-shell min-h-screen bg-(--page-background) px-4 py-6 text-foreground sm:px-6">
       <AutoPrintOnLoad />
       <style>{`
         @media print {
@@ -278,23 +287,13 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
             content: "Página " counter(page) " de " counter(pages);
           }
           .print-individual-running-header {
-            display: flex !important;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 12px;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            padding: 0 0 6mm 0;
-            border-bottom: 1px solid #d4d4d8;
-            background: #ffffff;
+            display: none !important;
           }
           .print-individual-offset {
-            padding-top: 24mm;
+            padding-top: 0;
           }
         }
-        .print-table {
+          .print-table {
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
@@ -305,16 +304,16 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
           padding: 0.55rem;
           vertical-align: top;
         }
-        .print-table th {
-          background: #f4f4f5;
-          font-size: 11px;
+          .print-table th {
+          background: #eef3f8;
+          font-size: 10px;
           text-transform: uppercase;
           letter-spacing: 0.06em;
           color: #52525b;
         }
-        .print-table td {
-          font-size: 11px;
-          color: #18181b;
+          .print-table td {
+          font-size: 10px;
+          color: #1e293b;
         }
         .print-chip {
           display: inline-flex;
@@ -340,6 +339,32 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
         }
         .print-individual-running-header {
           display: none;
+        }
+        .print-report-shell { background: linear-gradient(180deg, #f7faff 0%, #ffffff 320px); }
+        .print-hero { border: 1px solid #d7e2ef; background: linear-gradient(125deg, #ffffff 0%, #f1f6fc 100%); }
+        .print-hero-mark { width: 8px; align-self: stretch; border-radius: 999px; background: linear-gradient(180deg, #1c4e80, #5ea2d6); }
+        .print-meta-card { border: 1px solid #cfdeed; background: rgba(255,255,255,.86); box-shadow: 0 8px 18px rgba(30,65,110,.06); }
+        .print-metric { border: 1px solid #d6e1ed; background: #ffffff; box-shadow: 0 6px 15px rgba(30,65,110,.05); }
+        .print-metric-value { color: #163d68; letter-spacing: -.03em; }
+        .print-table thead { border-bottom: 2px solid #b9cce0; }
+        .print-table tbody tr:nth-child(even) { background: #fbfdff; }
+        .print-table td { padding: .55rem .45rem; }
+        .print-day { display: grid; gap: .24rem; min-width: 0; }
+        .print-day-time { color: #163d68; font-size: 11px; font-weight: 800; letter-spacing: -.01em; }
+        .print-day-date { color: #527aa5; font-size: 9px; font-weight: 800; letter-spacing: .05em; }
+        .print-day-schedule { color: #64748b; font-size: 9px; line-height: 1.25; }
+        .print-day-meta { color: #64748b; font-size: 9px; }
+        .print-day-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: .16rem .42rem; font-size: 9px; font-weight: 800; }
+        .print-day-status--ok { background: #dcfce7; color: #166534; }
+        .print-day-status--incident { background: #fee2e2; color: #b91c1c; }
+        .print-day-status--warning { background: #fef3c7; color: #92400e; }
+        .print-day-status--neutral { background: #eaf0f6; color: #52677e; }
+        @media print {
+          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .print-report-shell { background: #ffffff; }
+          .print-hero, .print-metric, .print-meta-card { box-shadow: none; }
+          .print-table thead { display: table-header-group; }
+          .print-table td { padding: .38rem .3rem; }
         }
       `}</style>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
@@ -370,18 +395,19 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
           </div>
         </div>
 
-        <header className="print-card brand-panel p-6 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
+        <header className="print-card print-hero flex gap-4 rounded-[28px] p-5 shadow-sm sm:p-6">
+          <div className="print-hero-mark hidden sm:block" aria-hidden="true" />
+          <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
               <p className="section-eyebrow">
                 {view === "individual" ? "Consulta individual" : "Consulta por periodo"}
               </p>
-              <h1 className="mt-2 text-2xl font-semibold text-(--color-brand-strong)">Reporte de asistencia staff</h1>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-(--color-brand-strong)">Reporte de asistencia staff</h1>
               <p className="mt-2 text-sm text-(--muted)">
                 Generado por {user.full_name} el {generatedAt}.
               </p>
             </div>
-            <div className="surface-muted grid gap-2 px-4 py-3 text-sm text-foreground">
+            <div className="print-meta-card grid shrink-0 gap-2 rounded-2xl px-4 py-3 text-sm text-foreground">
               <p><span className="font-semibold">Departamento:</span> {selectedDepartment?.name ?? "Sin selección"}</p>
               <p><span className="font-semibold">Campus:</span> {selectedDepartment?.campus ?? "Sin campus"}</p>
               {view === "period" ? (
@@ -414,8 +440,9 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
               </div>
             ) : (
               <article className="print-flow-card overflow-hidden rounded-3xl border border-border bg-white shadow-sm">
-                <div className="border-b border-border px-5 py-4">
-                  <h2 className="text-lg font-semibold text-(--color-brand-strong)">Reporte ejecutivo por periodo</h2>
+                <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+                  <div><p className="section-eyebrow">Detalle operativo</p><h2 className="mt-1 text-lg font-semibold text-(--color-brand-strong)">Reporte ejecutivo por periodo</h2></div>
+                  <p className="text-xs text-(--muted)">Horario · eventos · estatus</p>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="print-table">
@@ -424,7 +451,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
                         <th className="w-36">Semana</th>
                         <th className="w-56">Nombre / Departamento</th>
                         {WEEKDAY_COLUMNS.map((weekday) => (
-                          <th key={weekday.index}>{weekday.label}</th>
+                          <th key={weekday.index}><span className="block">{weekday.label}</span><span className="mt-0.5 block text-[9px] font-medium normal-case tracking-normal text-slate-500">{formatWeekdayDate(startDate, weekday.index)}</span></th>
                         ))}
                         <th className="w-24">Eventos</th>
                         <th className="w-24">Días</th>
@@ -445,7 +472,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
                             </td>
                             {WEEKDAY_COLUMNS.map((weekday) => (
                               <td key={`${row.employee_id}-${weekday.index}`}>
-                                <ExecutiveDayCell day={dayMap.get(weekday.index) ?? null} />
+                                <ExecutiveDayCell day={dayMap.get(weekday.index) ?? null} dateLabel={formatWeekdayDate(row.period_start, weekday.index)} />
                               </td>
                             ))}
                             <td className="text-center font-semibold">{row.total_events}</td>
@@ -523,7 +550,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
                                 </td>
                                 {WEEKDAY_COLUMNS.map((weekday) => (
                                   <td key={`${week.week_start}-${weekday.index}`}>
-                                    <ExecutiveDayCell day={dayMap.get(weekday.index) ?? null} />
+                                  <ExecutiveDayCell day={dayMap.get(weekday.index) ?? null} dateLabel={formatWeekdayDate(week.week_start, weekday.index)} />
                                   </td>
                                 ))}
                                 <td className="text-center font-semibold">{week.total_events}</td>
@@ -554,32 +581,30 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
 
 function PrintMetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <article className="print-subcard surface-muted p-4">
+    <article className="print-subcard print-metric rounded-2xl p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-(--muted)">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-(--color-brand-strong)">{value}</p>
+      <p className="print-metric-value mt-2 text-lg font-semibold">{value}</p>
     </article>
   );
 }
 
-function ExecutiveDayCell({ day }: { day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay | null }) {
+function ExecutiveDayCell({ day, dateLabel }: { day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay | null; dateLabel?: string | null }) {
   if (!day) {
-    return <p className="text-center text-(--muted)">—</p>;
+    return <div className="print-day"><p className="print-day-date">{dateLabel ?? "—"}</p><p className="text-center text-(--muted)">—</p></div>;
   }
 
   const status = formatStatus(day.status);
-  const hasIncident = isIncidentStatus(day.status);
+  const isAbsence = isAbsenceStatus(day.status);
   const absenceEventDetail = getAbsenceEventDetail(day);
   return (
-    <div className="space-y-1">
-      <p className="font-semibold">{formatTime(day.entry_event)} / {formatTime(day.exit_event)}</p>
-      <p className="text-(--muted)">{formatScheduleIntervals(day.schedule_intervals, day.scheduled_start, day.scheduled_end)}</p>
-      <p className="text-(--muted)">Ev: {day.total_events}</p>
-      <p className={hasIncident ? "print-incident" : "font-medium"}>{status.label}</p>
-      {absenceEventDetail ? <p className="print-incident">{absenceEventDetail}</p> : null}
-      {day.entry_event_inferred || day.exit_event_inferred ? (
-        <p className="print-incident">Inferida</p>
-      ) : null}
-      {day.has_mixed_schedule ? <p className="print-incident">Mixto</p> : null}
+    <div className="print-day">
+      <p className="print-day-date">{dateLabel ?? day.date}</p>
+      <p className="print-day-time">{formatTime(day.entry_event)} / {formatTime(day.exit_event)}</p>
+      <p className="print-day-schedule">Hor. {formatScheduleIntervals(day.schedule_intervals, day.scheduled_start, day.scheduled_end)}</p>
+      <p className="print-day-meta">{day.total_events} eventos</p>
+      <p className={`print-day-status ${isAbsence ? "print-day-status--incident" : day.status === "late" || day.status === "left_early" ? "print-day-status--warning" : day.status === "on_time" ? "print-day-status--ok" : "print-day-status--neutral"}`}>{status.label}</p>
+      {absenceEventDetail ? <p className="print-incident text-[9px]">{absenceEventDetail}</p> : null}
+      {day.has_mixed_schedule ? <p className="print-day-meta">Horario mixto</p> : null}
     </div>
   );
 }

@@ -188,6 +188,10 @@ run_as_account "$FRONTEND_BUILD_USER" "cd '$FRONTEND_DIR' && npm ci && npm run b
 chown -R "$SERVICE_USER":www-data "$BACKEND_DIR/.venv"
 chown -R "$SERVICE_USER":www-data "$FRONTEND_DIR/.next"
 
+# Apply only this application's schema changes with its production environment
+# before restarting the isolated backend service.
+run_as_account "$SERVICE_USER" "set -a && source '$BACKEND_ENV_PATH' && set +a && cd '$BACKEND_DIR' && .venv/bin/alembic -c alembic.ini upgrade head"
+
 escaped_app_root="$(escape_sed_replacement "$APP_ROOT")"
 
 sed "s|__APP_ROOT__|$escaped_app_root|g" "$BACKEND_SERVICE_TEMPLATE" > "$SYSTEMD_DIR/asistenciamodelo-backend.service"

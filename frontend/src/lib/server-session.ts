@@ -44,7 +44,9 @@ async function fetchBackend(path: string, init: BackendFetchInit = {}) {
 
     const response = await fetch(`${BACKEND_API_BASE_URL}${path}`, {
       ...init,
-      cache: "force-cache",
+      // Attendance and schedules change during the session; never reuse a
+      // server-rendered response after staff saves a new semester schedule.
+      cache: init.cache ?? "no-store",
       signal: controller.signal,
       headers: {
         ...(init.headers ?? {}),
