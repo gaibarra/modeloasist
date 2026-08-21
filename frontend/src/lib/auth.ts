@@ -128,7 +128,13 @@ export type StaffMobilePeriodDay = {
   scheduled_end: string | null;
   schedule_intervals: StaffScheduleInterval[];
   has_mixed_schedule: boolean;
-  status: "on_time" | "late" | "left_early" | "absence" | "no_schedule" | "no_events";
+  is_official_holiday: boolean;
+  official_holiday_name: string | null;
+  holiday_work_authorized: boolean;
+  exempt_entry: boolean;
+  exempt_exit: boolean;
+  exemption_reason: string | null;
+  status: "on_time" | "late" | "left_early" | "absence" | "no_schedule" | "no_events" | "official_holiday" | "justified" | "entry_excused" | "exit_excused";
 };
 
 export type StaffMobilePeriodRow = {
@@ -175,6 +181,29 @@ export type StaffSemesterSchedule = {
   days: StaffSemesterScheduleDay[];
 };
 
+export type StaffScheduleExceptionHistoryItem = {
+  id: string;
+  target_date: string;
+  operation: "entry" | "exit" | "replace" | "revoke" | "holiday_work" | "attendance_exemption" | "legacy";
+  instruction: string | null;
+  author_name: string | null;
+  created_at: string | null;
+  previous_intervals: StaffScheduleInterval[];
+  applied_intervals: StaffScheduleInterval[];
+  current_intervals: StaffScheduleInterval[];
+  is_current: boolean;
+  historical_detail_available: boolean;
+  deletion_kind: "schedule_override" | "attendance_exemption" | null;
+};
+
+export type StaffScheduleExceptionHistoryResponse = {
+  items: StaffScheduleExceptionHistoryItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+};
+
 export type StaffEmployeeYearWeekDay = {
   date: string;
   first_event: string | null;
@@ -188,7 +217,13 @@ export type StaffEmployeeYearWeekDay = {
   scheduled_end: string | null;
   schedule_intervals: StaffScheduleInterval[];
   has_mixed_schedule: boolean;
-  status: "on_time" | "late" | "left_early" | "absence" | "no_schedule" | "no_events";
+  is_official_holiday: boolean;
+  official_holiday_name: string | null;
+  holiday_work_authorized: boolean;
+  exempt_entry: boolean;
+  exempt_exit: boolean;
+  exemption_reason: string | null;
+  status: "on_time" | "late" | "left_early" | "absence" | "no_schedule" | "no_events" | "official_holiday" | "justified" | "entry_excused" | "exit_excused";
 };
 
 export type StaffEmployeeYearWeek = {
@@ -212,6 +247,7 @@ export type StaffEmployeeYearSummary = {
   total_days: number;
   late_days: number;
   punctuality_rate: number;
+  justified_days: number;
   registered_schedule_intervals: StaffScheduleInterval[];
   weeks: StaffEmployeeYearWeek[];
 };

@@ -99,10 +99,8 @@ export function StaffIndividualFilters({
         placeholder="Busca por nombre, correo o campus"
       />
       <label className="space-y-2 text-sm font-medium text-foreground">
-        Ventana de reporte
-        <select name="weeks" defaultValue={String(selectedWeeks)} className="field-input">
-          {[2, 3, 4, 6, 8, 12].map((weeks) => <option key={weeks} value={weeks}>Últimas {weeks} semanas</option>)}
-        </select>
+        Número de semanas
+        <input name="weeks" type="number" min="1" max="52" step="1" defaultValue={selectedWeeks} className="field-input" inputMode="numeric" />
       </label>
       <button
         type="submit"

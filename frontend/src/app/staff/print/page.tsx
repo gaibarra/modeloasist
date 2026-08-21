@@ -122,6 +122,14 @@ const formatStatus = (value: StaffMobilePeriodDay["status"]) => {
       return { label: "Salida anticipada", className: "print-chip print-chip--warning" };
     case "no_schedule":
       return { label: "Sin horario", className: "print-chip print-chip--info" };
+    case "official_holiday":
+      return { label: "Descanso oficial", className: "print-chip print-chip--info" };
+    case "justified":
+      return { label: "Justificado", className: "print-chip print-chip--info" };
+    case "entry_excused":
+      return { label: "Entrada justificada", className: "print-chip print-chip--info" };
+    case "exit_excused":
+      return { label: "Salida justificada", className: "print-chip print-chip--info" };
     default:
       return { label: "Sin eventos", className: "print-chip print-chip--muted" };
   }
@@ -226,7 +234,8 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
   const selectedDepartmentId = Number(params.department_id ?? defaultDepartmentId ?? 0) || 0;
   const selectedDepartment = departments.find((department) => department.id === selectedDepartmentId) ?? null;
   const selectedEmployeeId = Number(params.employee_id ?? 0) || 0;
-  const selectedWeeks = [2, 3, 4, 6, 8, 12].includes(Number(params.weeks)) ? Number(params.weeks) : 4;
+  const requestedWeeks = Number(params.weeks);
+  const selectedWeeks = Number.isInteger(requestedWeeks) && requestedWeeks >= 1 && requestedWeeks <= 52 ? requestedWeeks : 4;
   const startDate = params.start_date ?? defaultRange.startDate;
   const endDate = params.end_date ?? defaultRange.endDate;
   const validationError = validatePeriodRange(startDate, endDate);
@@ -257,7 +266,12 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
         @media print {
           @page {
             size: landscape;
-            margin: 10mm;
+            margin: 10mm 10mm 16mm;
+            @bottom-right {
+              content: "Página " counter(page) " de " counter(pages);
+              color: #52525b;
+              font-size: 10px;
+            }
           }
           html, body {
             background: #ffffff;
@@ -272,19 +286,6 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
           .print-flow-card {
             break-inside: auto !important;
             page-break-inside: auto !important;
-          }
-          .print-footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            display: flex;
-            justify-content: flex-end;
-            font-size: 10px;
-            color: #52525b;
-          }
-          .print-footer::after {
-            content: "Página " counter(page) " de " counter(pages);
           }
           .print-individual-running-header {
             display: none !important;
@@ -494,6 +495,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
                   <PrintMetricCard label="Días registrados" value={String(employeeYearSummary.total_days)} />
                   <PrintMetricCard label="Retardos" value={String(employeeYearSummary.late_days)} />
                   <PrintMetricCard label="Faltas" value={String(absenceDays)} />
+                  <PrintMetricCard label="Justificados" value={String(employeeYearSummary.justified_days)} />
                   <PrintMetricCard label="Puntualidad" value={formatPercent(employeeYearSummary.punctuality_rate)} />
                   <PrintMetricCard label="Horario registrado" value={formatScheduleIntervals(employeeYearSummary.registered_schedule_intervals)} />
                 </div>
@@ -573,7 +575,6 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
             )}
           </section>
         )}
-        <div className="print-footer" aria-hidden="true" />
       </div>
     </main>
   );
@@ -600,6 +601,7 @@ function ExecutiveDayCell({ day, dateLabel }: { day: StaffMobilePeriodDay | Staf
     <div className="print-day">
       <p className="print-day-date">{dateLabel ?? day.date}</p>
       <p className="print-day-time">{formatTime(day.entry_event)} / {formatTime(day.exit_event)}</p>
+      {day.is_official_holiday ? <p className="print-day-meta">{day.holiday_work_authorized ? "Turno autorizado" : day.official_holiday_name}</p> : null}
       <p className="print-day-schedule">Hor. {formatScheduleIntervals(day.schedule_intervals, day.scheduled_start, day.scheduled_end)}</p>
       <p className="print-day-meta">{day.total_events} eventos</p>
       <p className={`print-day-status ${isAbsence ? "print-day-status--incident" : day.status === "late" || day.status === "left_early" ? "print-day-status--warning" : day.status === "on_time" ? "print-day-status--ok" : "print-day-status--neutral"}`}>{status.label}</p>

@@ -1,7 +1,7 @@
 """Administrative staff endpoints and mobile attendance queries."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db.bootstrap import has_staff_access_schema
 from app.db.session import get_db
+from app.core.config import Settings, get_settings
 from app.dependencies.auth import (
     AuthenticatedActor,
     get_current_actor,
@@ -23,6 +24,14 @@ from app.models.attendance_event import AttendanceEvent
 from app.models.attendance_import_batch import AttendanceImportBatch
 from app.models.staff_access import Department, EmployeeDepartment, StaffDepartmentScope, StaffUser
 from app.models.staff_schedule import StaffSemesterSchedule, StaffSemesterScheduleInterval
+from app.models.staff_schedule_override import (
+    StaffScheduleBulkOperation,
+    StaffScheduleBulkOperationChange,
+    StaffScheduleDateOverride,
+    StaffScheduleDateOverrideInterval,
+)
+from app.models.staff_holiday_work import StaffHolidayWorkAssignment
+from app.models.staff_attendance_exemption import StaffAttendanceExemption
 from app.schemas.staff import (
     AttendanceImportBatchSummary,
     AttendanceImportResult,
@@ -36,18 +45,423 @@ from app.schemas.staff import (
     StaffMobilePeriodDay,
     StaffMobilePeriodRow,
     StaffScheduleInterval,
+    StaffScheduleBulkApplyRequest,
+    StaffScheduleBulkApplyResult,
+    StaffScheduleBulkChange,
+    StaffScheduleBulkExclusion,
+    StaffScheduleBulkInstructionRequest,
+    StaffScheduleBulkPreview,
+    StaffHolidayWorkAssignmentRequest,
+    StaffHolidayWorkAssignmentResponse,
+    StaffScheduleExceptionHistoryItem,
+    StaffScheduleExceptionHistoryResponse,
+    StaffAttendanceExemptionRequest,
+    StaffAttendanceExemptionResponse,
     StaffSemesterScheduleDay,
     StaffSemesterScheduleResponse,
     StaffSemesterScheduleUpdateRequest,
     StaffUserCreateRequest,
     StaffUserSummary,
 )
-from app.security import hash_password
+from app.security import create_access_token, decode_access_token, hash_password
 from app.services.department_normalization import derive_department_campus
 from app.services.attendance_import import AttendanceImportService
 from app.services.analytics import AnalyticsService, REPORT_YEAR, REPORT_YEAR_END, REPORT_YEAR_START
+from app.services.staff_schedule_bulk import BulkInstructionError, parse_bulk_instruction
+from app.services.official_holidays import official_holiday_name
 
 router = APIRouter(prefix="/staff", tags=["staff"])
+
+_EXEMPTION_REASONS = {"incapacidad", "comision_institucional", "permiso_staff", "fuerza_mayor", "otro"}
+
+
+@router.post("/attendance-exemptions", response_model=list[StaffAttendanceExemptionResponse], status_code=status.HTTP_201_CREATED)
+def create_staff_attendance_exemption(
+    payload: StaffAttendanceExemptionRequest,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+) -> list[StaffAttendanceExemptionResponse]:
+    _require_staff_schema(db)
+    _require_employee_in_department(db, payload.employee_id, payload.department_id, actor)
+    reason = payload.reason.strip().lower()
+    if reason not in _EXEMPTION_REASONS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El motivo de exención no es válido.")
+    if not payload.exempt_entry and not payload.exempt_exit:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debes exentar entrada, salida o ambas.")
+    note = (payload.note or "").strip() or None
+    if reason == "otro" and note is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El motivo “Otro” requiere una nota.")
+    if payload.end_date < payload.start_date or (payload.end_date - payload.start_date).days > 62:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El rango de exención debe ser válido y no exceder 63 días.")
+    results = []
+    for offset in range((payload.end_date - payload.start_date).days + 1):
+        target_date = payload.start_date + timedelta(days=offset)
+        exemption = db.query(StaffAttendanceExemption).filter(
+            StaffAttendanceExemption.employee_id == payload.employee_id,
+            StaffAttendanceExemption.target_date == target_date,
+        ).first()
+        if exemption is None:
+            exemption = StaffAttendanceExemption(employee_id=payload.employee_id, department_id=payload.department_id, target_date=target_date)
+            db.add(exemption)
+        exemption.exempt_entry = payload.exempt_entry
+        exemption.exempt_exit = payload.exempt_exit
+        exemption.reason = reason
+        exemption.note = note
+        exemption.granted_by_staff_user_id = actor.staff.id if actor.staff else None
+        exemption.revoked_at = None
+        exemption.revoked_by_staff_user_id = None
+        results.append(exemption)
+    db.commit()
+    return [_to_attendance_exemption_response(item, actor.staff.full_name if actor.staff else None) for item in results]
+
+
+@router.get("/attendance-exemptions", response_model=list[StaffAttendanceExemptionResponse])
+def list_staff_attendance_exemptions(
+    department_id: int,
+    employee_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+) -> list[StaffAttendanceExemptionResponse]:
+    _require_staff_schema(db)
+    _require_employee_in_department(db, employee_id, department_id, actor)
+    query = db.query(StaffAttendanceExemption, StaffUser.full_name).outerjoin(StaffUser, StaffUser.id == StaffAttendanceExemption.granted_by_staff_user_id).filter(StaffAttendanceExemption.employee_id == employee_id).order_by(StaffAttendanceExemption.target_date.desc())
+    if start_date:
+        query = query.filter(StaffAttendanceExemption.target_date >= start_date)
+    if end_date:
+        query = query.filter(StaffAttendanceExemption.target_date <= end_date)
+    return [_to_attendance_exemption_response(row, author) for row, author in query.all()]
+
+
+@router.get("/schedule-exceptions", response_model=StaffScheduleExceptionHistoryResponse)
+def list_staff_schedule_exceptions(
+    department_id: int,
+    employee_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    offset: int = 0,
+    limit: int = 50,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+) -> StaffScheduleExceptionHistoryResponse:
+    _require_staff_schema(db)
+    _require_employee_in_department(db, employee_id, department_id, actor)
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El rango de fechas es inválido.")
+    if offset < 0 or not 1 <= limit <= 50:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La paginación es inválida.")
+
+    audit_query = (
+        db.query(StaffScheduleBulkOperationChange, StaffScheduleBulkOperation, StaffUser.full_name)
+        .join(StaffScheduleBulkOperation, StaffScheduleBulkOperation.id == StaffScheduleBulkOperationChange.bulk_operation_id)
+        .outerjoin(StaffUser, StaffUser.id == StaffScheduleBulkOperation.staff_user_id)
+        .filter(StaffScheduleBulkOperationChange.employee_id == employee_id)
+    )
+    overrides_query = db.query(StaffScheduleDateOverride).options(selectinload(StaffScheduleDateOverride.intervals)).filter(
+        StaffScheduleDateOverride.employee_id == employee_id
+    )
+    if start_date:
+        audit_query = audit_query.filter(StaffScheduleBulkOperationChange.target_date >= start_date)
+        overrides_query = overrides_query.filter(StaffScheduleDateOverride.target_date >= start_date)
+    if end_date:
+        audit_query = audit_query.filter(StaffScheduleBulkOperationChange.target_date <= end_date)
+        overrides_query = overrides_query.filter(StaffScheduleDateOverride.target_date <= end_date)
+
+    overrides = overrides_query.all()
+    current_by_date = {
+        override.target_date: override
+        for override in overrides
+    }
+    audit_rows = audit_query.all()
+    audited_override_keys = {
+        (int(change.bulk_operation_id), change.target_date)
+        for change, _, _ in audit_rows
+    }
+    items: list[StaffScheduleExceptionHistoryItem] = []
+    for change, operation, author_name in audit_rows:
+        current_override = current_by_date.get(change.target_date)
+        items.append(
+            StaffScheduleExceptionHistoryItem(
+                id=f"audit-{change.id}",
+                target_date=change.target_date,
+                operation=operation.operation,
+                instruction=operation.instruction,
+                author_name=author_name,
+                created_at=operation.created_at,
+                previous_intervals=[StaffScheduleInterval(**interval) for interval in change.previous_intervals],
+                applied_intervals=[StaffScheduleInterval(**interval) for interval in change.applied_intervals],
+                current_intervals=_to_schedule_intervals(current_override),
+                is_current=current_override is not None and current_override.bulk_operation_id == operation.id,
+                historical_detail_available=True,
+                deletion_kind="schedule_override" if current_override is not None and current_override.bulk_operation_id == operation.id and operation.operation != "holiday_work" else None,
+            )
+        )
+    for override in overrides:
+        if override.bulk_operation_id is not None and (int(override.bulk_operation_id), override.target_date) in audited_override_keys:
+            continue
+        intervals = _to_schedule_intervals(override)
+        items.append(
+            StaffScheduleExceptionHistoryItem(
+                id=f"current-{override.id}",
+                target_date=override.target_date,
+                operation="legacy",
+                instruction="Excepción vigente sin historial de aplicación.",
+                applied_intervals=intervals,
+                current_intervals=intervals,
+                is_current=True,
+                historical_detail_available=False,
+                deletion_kind="schedule_override",
+            )
+        )
+    exemption_query = db.query(StaffAttendanceExemption, StaffUser.full_name).outerjoin(StaffUser, StaffUser.id == StaffAttendanceExemption.granted_by_staff_user_id).filter(StaffAttendanceExemption.employee_id == employee_id)
+    if start_date:
+        exemption_query = exemption_query.filter(StaffAttendanceExemption.target_date >= start_date)
+    if end_date:
+        exemption_query = exemption_query.filter(StaffAttendanceExemption.target_date <= end_date)
+    for exemption, author_name in exemption_query.all():
+        scope = "entrada y salida" if exemption.exempt_entry and exemption.exempt_exit else "entrada" if exemption.exempt_entry else "salida"
+        revoking_staff = db.get(StaffUser, exemption.revoked_by_staff_user_id) if exemption.revoked_by_staff_user_id else None
+        revoked_note = f" Revocada por {revoking_staff.full_name if revoking_staff else 'staff no identificado'} el {exemption.revoked_at.strftime('%d/%m/%Y, %H:%M')}" if exemption.revoked_at else ""
+        items.append(StaffScheduleExceptionHistoryItem(id=f"attendance-exemption-{exemption.id}", target_date=exemption.target_date, operation="attendance_exemption", instruction=f"Checada exentada: {scope}. Motivo: {exemption.reason}.{f' {exemption.note}' if exemption.note else ''}{revoked_note}", author_name=author_name, created_at=exemption.created_at, applied_intervals=[], current_intervals=[], is_current=exemption.revoked_at is None, historical_detail_available=True, deletion_kind="attendance_exemption" if exemption.revoked_at is None else None))
+    items.sort(key=lambda item: (item.target_date, item.created_at or datetime.min), reverse=True)
+    total = len(items)
+    page = items[offset:offset + limit]
+    return StaffScheduleExceptionHistoryResponse(items=page, total=total, offset=offset, limit=limit, has_more=offset + limit < total)
+
+
+@router.delete("/schedule-exceptions", status_code=status.HTTP_200_OK)
+def revoke_staff_schedule_exception(
+    department_id: int,
+    employee_id: int,
+    target_date: date,
+    kind: str,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+) -> None:
+    """Revoke a current exception while preserving its audit trail."""
+    _require_staff_schema(db)
+    _require_employee_in_department(db, employee_id, department_id, actor)
+
+    if kind == "attendance_exemption":
+        exemption = db.query(StaffAttendanceExemption).filter(
+            StaffAttendanceExemption.employee_id == employee_id,
+            StaffAttendanceExemption.target_date == target_date,
+            StaffAttendanceExemption.revoked_at.is_(None),
+        ).first()
+        if exemption is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No existe una checada justificada vigente para esa fecha.")
+        exemption.revoked_at = datetime.now()
+        exemption.revoked_by_staff_user_id = actor.staff.id
+        db.commit()
+        return None
+
+    if kind != "schedule_override":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El tipo de excepción no es válido.")
+    override = db.query(StaffScheduleDateOverride).options(selectinload(StaffScheduleDateOverride.intervals)).filter(
+        StaffScheduleDateOverride.employee_id == employee_id,
+        StaffScheduleDateOverride.target_date == target_date,
+    ).first()
+    if override is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No existe una excepción de horario vigente para esa fecha.")
+    operation = StaffScheduleBulkOperation(
+        staff_user_id=actor.staff.id,
+        department_id=department_id,
+        instruction="Excepción de horario eliminada por staff.",
+        operation="revoke",
+        start_date=target_date,
+        end_date=target_date,
+    )
+    db.add(operation)
+    db.flush()
+    db.add(
+        StaffScheduleBulkOperationChange(
+            bulk_operation_id=operation.id,
+            employee_id=employee_id,
+            target_date=target_date,
+            previous_intervals=_serialize_interval_pairs([(item.start, item.end) for item in override.intervals]),
+            applied_intervals=[],
+        )
+    )
+    db.delete(override)
+    db.commit()
+    return None
+
+
+@router.put("/holiday-work", response_model=StaffHolidayWorkAssignmentResponse)
+def authorize_staff_holiday_work(
+    payload: StaffHolidayWorkAssignmentRequest,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+) -> StaffHolidayWorkAssignmentResponse:
+    _require_staff_schema(db)
+    _require_employee_in_department(db, payload.employee_id, payload.department_id, actor)
+    holiday_name = official_holiday_name(payload.holiday_date)
+    if holiday_name is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La fecha indicada no es un descanso oficial federal.")
+    _validate_interval_pairs([(interval.start, interval.end) for interval in payload.intervals])
+    assignment = db.query(StaffHolidayWorkAssignment).filter(
+        StaffHolidayWorkAssignment.employee_id == payload.employee_id,
+        StaffHolidayWorkAssignment.holiday_date == payload.holiday_date,
+    ).first()
+    if assignment is None:
+        assignment = StaffHolidayWorkAssignment(
+            employee_id=payload.employee_id,
+            holiday_date=payload.holiday_date,
+            holiday_name=holiday_name,
+            assigned_by_staff_user_id=actor.staff.id if actor.staff else None,
+        )
+        db.add(assignment)
+    else:
+        assignment.holiday_name = holiday_name
+        assignment.assigned_by_staff_user_id = actor.staff.id if actor.staff else None
+    operation = StaffScheduleBulkOperation(
+        staff_user_id=actor.staff.id if actor.staff else None,
+        department_id=payload.department_id,
+        instruction=f"Trabajo autorizado en descanso oficial: {holiday_name}",
+        operation="holiday_work",
+        start_date=payload.holiday_date,
+        end_date=payload.holiday_date,
+    )
+    db.add(operation)
+    db.flush()
+    override = db.query(StaffScheduleDateOverride).options(selectinload(StaffScheduleDateOverride.intervals)).filter(
+        StaffScheduleDateOverride.employee_id == payload.employee_id,
+        StaffScheduleDateOverride.target_date == payload.holiday_date,
+    ).first()
+    previous_intervals = [] if override is None else [(item.start, item.end) for item in override.intervals]
+    if override is None:
+        override = StaffScheduleDateOverride(employee_id=payload.employee_id, target_date=payload.holiday_date, bulk_operation_id=operation.id)
+        db.add(override)
+    else:
+        override.bulk_operation_id = operation.id
+        override.intervals.clear()
+    for position, interval in enumerate(payload.intervals):
+        override.intervals.append(StaffScheduleDateOverrideInterval(position=position, start=interval.start, end=interval.end))
+    db.add(
+        StaffScheduleBulkOperationChange(
+            bulk_operation_id=operation.id,
+            employee_id=payload.employee_id,
+            target_date=payload.holiday_date,
+            previous_intervals=_serialize_interval_pairs(previous_intervals),
+            applied_intervals=_serialize_interval_pairs([(item.start, item.end) for item in payload.intervals]),
+        )
+    )
+    db.commit()
+    return StaffHolidayWorkAssignmentResponse(employee_id=payload.employee_id, holiday_date=payload.holiday_date, holiday_name=holiday_name, intervals=payload.intervals)
+
+
+@router.post("/schedule-bulk/preview", response_model=StaffScheduleBulkPreview)
+def preview_staff_schedule_bulk_change(
+    payload: StaffScheduleBulkInstructionRequest,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StaffScheduleBulkPreview:
+    _require_staff_schema(db)
+    _require_staff_department_access(actor=actor, department_id=payload.department_id)
+    try:
+        parsed = parse_bulk_instruction(payload.instruction)
+    except BulkInstructionError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    preview = _build_bulk_schedule_preview(db, payload.department_id, parsed)
+    if not preview.changes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No hay días con horario que puedan modificarse en el rango indicado.")
+    token_payload = {
+        "purpose": "staff-schedule-bulk-preview",
+        "staff_user_id": actor.staff.id if actor.staff else None,
+        "department_id": payload.department_id,
+        "instruction": parsed.instruction,
+        "operation": parsed.operation,
+        "start_date": parsed.start_date.isoformat(),
+        "end_date": parsed.end_date.isoformat(),
+        "changes": [
+            {
+                "employee_id": change.employee_id,
+                "target_date": change.target_date.isoformat(),
+                "previous_intervals": [[item.start.isoformat(), item.end.isoformat()] for item in change.previous_intervals],
+                "intervals": [[item.start.isoformat(), item.end.isoformat()] for item in change.new_intervals],
+            }
+            for change in preview.changes
+        ],
+    }
+    preview.preview_token = create_access_token(token_payload, settings.auth_secret_key, expires_minutes=10)
+    return preview
+
+
+@router.post("/schedule-bulk/apply", response_model=StaffScheduleBulkApplyResult)
+def apply_staff_schedule_bulk_change(
+    payload: StaffScheduleBulkApplyRequest,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StaffScheduleBulkApplyResult:
+    _require_staff_schema(db)
+    token = decode_access_token(payload.preview_token, settings.auth_secret_key)
+    if not token or token.get("purpose") != "staff-schedule-bulk-preview" or token.get("staff_user_id") != (actor.staff.id if actor.staff else None):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La vista previa expiró o no es válida. Interpreta la instrucción nuevamente.")
+    department_id = token.get("department_id")
+    changes = token.get("changes")
+    if not isinstance(department_id, int) or not isinstance(changes, list) or not changes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La vista previa no contiene cambios válidos.")
+    _require_staff_department_access(actor=actor, department_id=department_id)
+    employee_ids = {item.get("employee_id") for item in changes if isinstance(item, dict) and isinstance(item.get("employee_id"), int)}
+    in_department = {
+        int(value)
+        for (value,) in db.execute(
+            select(EmployeeDepartment.employee_id)
+            .where(EmployeeDepartment.department_id == department_id)
+            .where(EmployeeDepartment.employee_id.in_(employee_ids))
+        )
+    }
+    if employee_ids != in_department:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Uno o más colaboradores ya no pertenecen al departamento activo. Genera una nueva vista previa.")
+    operation = StaffScheduleBulkOperation(
+        staff_user_id=actor.staff.id,
+        department_id=department_id,
+        instruction=str(token.get("instruction") or ""),
+        operation=str(token.get("operation") or ""),
+        start_date=date.fromisoformat(str(token.get("start_date"))),
+        end_date=date.fromisoformat(str(token.get("end_date"))),
+    )
+    db.add(operation)
+    db.flush()
+    for item in changes:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La vista previa contiene un cambio inválido.")
+        employee_id = item.get("employee_id")
+        try:
+            target_date = date.fromisoformat(str(item.get("target_date")))
+            previous_intervals = [(time.fromisoformat(start), time.fromisoformat(end)) for start, end in item.get("previous_intervals", [])]
+            intervals = [(time.fromisoformat(start), time.fromisoformat(end)) for start, end in item.get("intervals", [])]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La vista previa contiene horarios inválidos.") from exc
+        if not isinstance(employee_id, int) or not intervals:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La vista previa contiene horarios inválidos.")
+        _validate_interval_pairs(intervals)
+        override = db.query(StaffScheduleDateOverride).options(selectinload(StaffScheduleDateOverride.intervals)).filter(
+            StaffScheduleDateOverride.employee_id == employee_id,
+            StaffScheduleDateOverride.target_date == target_date,
+        ).first()
+        if override is None:
+            override = StaffScheduleDateOverride(employee_id=employee_id, target_date=target_date, bulk_operation_id=operation.id)
+            db.add(override)
+        else:
+            override.bulk_operation_id = operation.id
+            override.intervals.clear()
+        for position, (start, end) in enumerate(intervals):
+            override.intervals.append(StaffScheduleDateOverrideInterval(position=position, start=start, end=end))
+        db.add(
+            StaffScheduleBulkOperationChange(
+                bulk_operation_id=operation.id,
+                employee_id=employee_id,
+                target_date=target_date,
+                previous_intervals=_serialize_interval_pairs(previous_intervals),
+                applied_intervals=_serialize_interval_pairs(intervals),
+            )
+        )
+    db.commit()
+    return StaffScheduleBulkApplyResult(operation_id=operation.id, affected_employees=len(employee_ids), changed_days=len(changes))
 
 
 @router.get("/schedules", response_model=StaffSemesterScheduleResponse)
@@ -314,6 +728,12 @@ def get_staff_daily_attendance(
                         for interval in day.schedule_intervals
                     ],
                     has_mixed_schedule=day.has_mixed_schedule,
+                    is_official_holiday=day.is_official_holiday,
+                    official_holiday_name=day.official_holiday_name,
+                    holiday_work_authorized=day.holiday_work_authorized,
+                    exempt_entry=day.exempt_entry,
+                    exempt_exit=day.exempt_exit,
+                    exemption_reason=day.exemption_reason,
                     status=day.status,
                 )
                 for day in row.days
@@ -367,8 +787,8 @@ def get_staff_employee_year_summary(
     _require_staff_department_access(actor=actor, department_id=department_id)
     if employee_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="employee_id inválido")
-    if weeks not in {2, 3, 4, 6, 8, 12}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="weeks debe ser 2, 3, 4, 6, 8 o 12")
+    if not 1 <= weeks <= 52:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="weeks debe estar entre 1 y 52")
 
     employee_row = db.execute(
         select(
@@ -415,6 +835,7 @@ def get_staff_employee_year_summary(
         window_end=report_window_end,
         total_days=annual_row.active_days,
         late_days=sum(1 for day in annual_row.days if day.status == "late"),
+        justified_days=sum(1 for day in annual_row.days if day.status in {"justified", "entry_excused", "exit_excused"}),
         punctuality_rate=(
             (
                 annual_row.active_days
@@ -554,6 +975,94 @@ def _validate_schedule_days(days: list[StaffSemesterScheduleDay]) -> None:
             previous_end = interval.end
 
 
+def _validate_interval_pairs(intervals: list[tuple[time, time]]) -> None:
+    previous_end = None
+    for start, end in sorted(intervals):
+        if start >= end:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El cambio produce un bloque de horario inválido.")
+        if previous_end is not None and start < previous_end:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El cambio produce bloques de horario traslapados.")
+        previous_end = end
+
+
+def _serialize_interval_pairs(intervals: list[tuple[time, time]]) -> list[dict[str, str]]:
+    return [{"start": start.isoformat(), "end": end.isoformat()} for start, end in intervals]
+
+
+def _to_schedule_intervals(override: StaffScheduleDateOverride | None) -> list[StaffScheduleInterval]:
+    if override is None:
+        return []
+    return [StaffScheduleInterval(start=interval.start, end=interval.end) for interval in override.intervals]
+
+
+def _to_attendance_exemption_response(exemption: StaffAttendanceExemption, author_name: str | None) -> StaffAttendanceExemptionResponse:
+    return StaffAttendanceExemptionResponse(
+        id=exemption.id,
+        target_date=exemption.target_date,
+        exempt_entry=exemption.exempt_entry,
+        exempt_exit=exemption.exempt_exit,
+        reason=exemption.reason,
+        note=exemption.note,
+        author_name=author_name,
+        created_at=exemption.created_at,
+        revoked_at=exemption.revoked_at,
+    )
+
+
+def _build_bulk_schedule_preview(db: Session, department_id: int, parsed) -> StaffScheduleBulkPreview:
+    employees = db.execute(
+        select(Employee.id, Employee.nombre)
+        .join(EmployeeDepartment, EmployeeDepartment.employee_id == Employee.id)
+        .where(EmployeeDepartment.department_id == department_id)
+        .order_by(Employee.nombre.asc())
+    ).all()
+    employee_ids = [int(row.id) for row in employees]
+    analytics = AnalyticsService(db)
+    dates = [parsed.start_date + timedelta(days=offset) for offset in range((parsed.end_date - parsed.start_date).days + 1)]
+    schedule_maps = {
+        current_date: analytics._resolved_schedule_interval_map(employee_ids, current_date)
+        for current_date in dates
+    }
+    changes: list[StaffScheduleBulkChange] = []
+    exclusions: list[StaffScheduleBulkExclusion] = []
+    affected_ids: set[int] = set()
+    for employee in employees:
+        employee_id = int(employee.id)
+        for current_date in dates:
+            previous = schedule_maps[current_date].get((employee_id, current_date.weekday()), [])
+            if not previous:
+                exclusions.append(StaffScheduleBulkExclusion(employee_id=employee_id, employee_name=employee.nombre, target_date=current_date, reason="Sin horario registrado; no se creó un turno nuevo."))
+                continue
+            pairs = [(interval.start, interval.end) for interval in previous]
+            if parsed.operation == "entry":
+                pairs[0] = (parsed.start, pairs[0][1])
+            elif parsed.operation == "exit":
+                pairs[-1] = (pairs[-1][0], parsed.end)
+            else:
+                pairs = [(parsed.start, parsed.end)]
+            try:
+                _validate_interval_pairs(pairs)
+            except HTTPException as exc:
+                exclusions.append(StaffScheduleBulkExclusion(employee_id=employee_id, employee_name=employee.nombre, target_date=current_date, reason=exc.detail))
+                continue
+            new_intervals = [StaffScheduleInterval(start=start, end=end) for start, end in pairs]
+            if [(item.start, item.end) for item in previous] == pairs:
+                continue
+            changes.append(StaffScheduleBulkChange(employee_id=employee_id, employee_name=employee.nombre, target_date=current_date, previous_intervals=[StaffScheduleInterval(start=item.start, end=item.end) for item in previous], new_intervals=new_intervals))
+            affected_ids.add(employee_id)
+    return StaffScheduleBulkPreview(
+        department_id=department_id,
+        instruction=parsed.instruction,
+        operation=parsed.operation,
+        start_date=parsed.start_date,
+        end_date=parsed.end_date,
+        affected_employees=len(affected_ids),
+        changes=changes,
+        exclusions=exclusions,
+        preview_token="",
+    )
+
+
 def _resolve_week_period(*, start_date: date | None, end_date: date | None) -> tuple[date, date]:
     if start_date is None and end_date is None:
         today = date.today()
@@ -650,6 +1159,12 @@ def _group_year_days_by_week(*, days, report_window_end: date) -> list[StaffEmpl
                     for interval in day.schedule_intervals
                 ],
                 has_mixed_schedule=day.has_mixed_schedule,
+                is_official_holiday=day.is_official_holiday,
+                official_holiday_name=day.official_holiday_name,
+                holiday_work_authorized=day.holiday_work_authorized,
+                exempt_entry=day.exempt_entry,
+                exempt_exit=day.exempt_exit,
+                exemption_reason=day.exemption_reason,
                 status=day.status,
             )
         )

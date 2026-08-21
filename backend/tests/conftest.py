@@ -10,6 +10,9 @@ from app.main import app
 from app.models import employee_credential  # noqa: F401
 from app.models import staff_access  # noqa: F401
 from app.models import staff_schedule  # noqa: F401
+from app.models import staff_schedule_override  # noqa: F401
+from app.models import staff_holiday_work  # noqa: F401
+from app.models import staff_attendance_exemption  # noqa: F401
 
 
 engine = create_engine(

@@ -19,6 +19,10 @@ from app.models.inferred_schedule import InferredSchedule
 from app.models.schedule import Schedule
 from app.models.staff_access import Department, EmployeeDepartment
 from app.models.staff_schedule import StaffSemesterSchedule, StaffSemesterScheduleInterval
+from app.models.staff_schedule_override import StaffScheduleDateOverride, StaffScheduleDateOverrideInterval
+from app.models.staff_holiday_work import StaffHolidayWorkAssignment
+from app.models.staff_attendance_exemption import StaffAttendanceExemption
+from app.services.official_holidays import official_holiday_name
 from app.services.department_normalization import derive_department_campus
 
 REPORT_YEAR = 2026
@@ -199,6 +203,12 @@ class StaffDailyAttendanceRow:
     status: str
     schedule_intervals: list[StaffScheduleInterval] = field(default_factory=list)
     has_mixed_schedule: bool = False
+    is_official_holiday: bool = False
+    official_holiday_name: str | None = None
+    holiday_work_authorized: bool = False
+    exempt_entry: bool = False
+    exempt_exit: bool = False
+    exemption_reason: str | None = None
 
 
 @dataclass
@@ -216,6 +226,12 @@ class StaffPeriodAttendanceDay:
     status: str
     schedule_intervals: list[StaffScheduleInterval] = field(default_factory=list)
     has_mixed_schedule: bool = False
+    is_official_holiday: bool = False
+    official_holiday_name: str | None = None
+    holiday_work_authorized: bool = False
+    exempt_entry: bool = False
+    exempt_exit: bool = False
+    exemption_reason: str | None = None
 
 
 @dataclass
@@ -906,6 +922,9 @@ class AnalyticsService:
 
         employee_ids_for_schedule = [int(row.employee_id) for row in rows]
         schedule_interval_map = self._resolved_schedule_interval_map(employee_ids_for_schedule, target_date)
+        holiday_name = official_holiday_name(target_date)
+        holiday_work_employee_ids = self._holiday_work_employee_ids(employee_ids_for_schedule, target_date)
+        exemptions = self._attendance_exemptions(employee_ids_for_schedule, target_date)
 
         payload: list[StaffDailyAttendanceRow] = []
         for row in rows:
@@ -919,12 +938,16 @@ class AnalyticsService:
                 schedule_intervals=intervals,
             )
             total_events = int(row.total_events or 0)
-            status = _staff_daily_status(
+            holiday_work_authorized = int(row.employee_id) in holiday_work_employee_ids
+            exemption = exemptions.get(int(row.employee_id))
+            status = "official_holiday" if holiday_name and not holiday_work_authorized else _staff_daily_status(
                 first_event=first_event,
                 last_event=last_event,
                 total_events=total_events,
                 scheduled_start=scheduled_start,
                 scheduled_end=scheduled_end,
+                exempt_entry=bool(exemption and exemption.exempt_entry),
+                exempt_exit=bool(exemption and exemption.exempt_exit),
             )
             payload.append(
                 StaffDailyAttendanceRow(
@@ -946,6 +969,12 @@ class AnalyticsService:
                     scheduled_end=scheduled_end,
                     schedule_intervals=intervals,
                     has_mixed_schedule=len(intervals) > 1,
+                    is_official_holiday=holiday_name is not None,
+                    official_holiday_name=holiday_name,
+                    holiday_work_authorized=holiday_work_authorized,
+                    exempt_entry=bool(exemption and exemption.exempt_entry),
+                    exempt_exit=bool(exemption and exemption.exempt_exit),
+                    exemption_reason=exemption.reason if exemption else None,
                     status=status,
                 )
             )
@@ -1014,6 +1043,11 @@ class AnalyticsService:
             current_date: self._resolved_schedule_interval_map(employee_id_list, current_date, fallback=schedule_interval_map)
             for current_date in all_dates
         }
+        holiday_work_maps = {
+            current_date: self._holiday_work_employee_ids(employee_id_list, current_date)
+            for current_date in all_dates
+        }
+        exemption_maps = {current_date: self._attendance_exemptions(employee_id_list, current_date) for current_date in all_dates}
         payload: list[StaffPeriodAttendanceRow] = []
         for row in employee_rows:
             day_payload: list[StaffPeriodAttendanceDay] = []
@@ -1028,12 +1062,17 @@ class AnalyticsService:
                     last_event=last_event,
                     schedule_intervals=intervals,
                 )
-                status = _staff_daily_status(
+                holiday_name = official_holiday_name(current_date)
+                holiday_work_authorized = int(row.employee_id) in holiday_work_maps[current_date]
+                exemption = exemption_maps[current_date].get(int(row.employee_id))
+                status = "official_holiday" if holiday_name and not holiday_work_authorized else _staff_daily_status(
                     first_event=first_event,
                     last_event=last_event,
                     total_events=total_events,
                     scheduled_start=scheduled_start,
                     scheduled_end=scheduled_end,
+                    exempt_entry=bool(exemption and exemption.exempt_entry),
+                    exempt_exit=bool(exemption and exemption.exempt_exit),
                 )
                 if total_events > 0:
                     active_days += 1
@@ -1052,6 +1091,12 @@ class AnalyticsService:
                         scheduled_end=scheduled_end,
                         schedule_intervals=intervals,
                         has_mixed_schedule=len(intervals) > 1,
+                        is_official_holiday=holiday_name is not None,
+                        official_holiday_name=holiday_name,
+                        holiday_work_authorized=holiday_work_authorized,
+                        exempt_entry=bool(exemption and exemption.exempt_entry),
+                        exempt_exit=bool(exemption and exemption.exempt_exit),
+                        exemption_reason=exemption.reason if exemption else None,
                         status=status,
                     )
                 )
@@ -1072,6 +1117,30 @@ class AnalyticsService:
                 )
             )
         return payload
+
+    def _holiday_work_employee_ids(self, employee_ids: Iterable[int], target_date: date) -> set[int]:
+        ids = [int(employee_id) for employee_id in employee_ids if employee_id]
+        if not ids:
+            return set()
+        return {
+            int(employee_id)
+            for (employee_id,) in self._db.execute(
+                select(StaffHolidayWorkAssignment.employee_id)
+                .where(StaffHolidayWorkAssignment.employee_id.in_(ids))
+                .where(StaffHolidayWorkAssignment.holiday_date == target_date)
+            )
+        }
+
+    def _attendance_exemptions(self, employee_ids: Iterable[int], target_date: date) -> dict[int, StaffAttendanceExemption]:
+        ids = [int(employee_id) for employee_id in employee_ids if employee_id]
+        if not ids:
+            return {}
+        rows = self._db.query(StaffAttendanceExemption).filter(
+            StaffAttendanceExemption.employee_id.in_(ids),
+            StaffAttendanceExemption.target_date == target_date,
+            StaffAttendanceExemption.revoked_at.is_(None),
+        ).all()
+        return {int(row.employee_id): row for row in rows}
 
     def _normalized_schedule_interval_map(
         self,
@@ -1105,26 +1174,44 @@ class AnalyticsService:
         if not ids:
             return base
         semester = 1 if target_date.month <= 6 else 2 if target_date.month >= 8 else None
-        if semester is None:
-            return base
-        profiles = self._db.execute(
-            select(StaffSemesterSchedule.id, StaffSemesterSchedule.employee_id)
-            .where(StaffSemesterSchedule.employee_id.in_(ids))
-            .where(StaffSemesterSchedule.academic_year == target_date.year)
-            .where(StaffSemesterSchedule.semester == semester)
+        if semester is not None:
+            profiles = self._db.execute(
+                select(StaffSemesterSchedule.id, StaffSemesterSchedule.employee_id)
+                .where(StaffSemesterSchedule.employee_id.in_(ids))
+                .where(StaffSemesterSchedule.academic_year == target_date.year)
+                .where(StaffSemesterSchedule.semester == semester)
+            ).all()
+            if profiles:
+                profile_ids = [int(row.id) for row in profiles]
+                manual_ids = {int(row.employee_id) for row in profiles}
+                for employee_id in manual_ids:
+                    for weekday in range(7):
+                        base.pop((employee_id, weekday), None)
+                rows = self._db.execute(select(StaffSemesterSchedule.employee_id, StaffSemesterScheduleInterval.weekday, StaffSemesterScheduleInterval.start, StaffSemesterScheduleInterval.end).join(StaffSemesterScheduleInterval).where(StaffSemesterSchedule.id.in_(profile_ids))).all()
+                grouped: dict[tuple[int, int], list[tuple[time, time]]] = defaultdict(list)
+                for employee_id, weekday, start, end in rows:
+                    grouped[(int(employee_id), int(weekday))].append((start, end))
+                base.update({key: _merge_schedule_intervals(value) for key, value in grouped.items()})
+
+        overrides = self._db.execute(
+            select(
+                StaffScheduleDateOverride.employee_id,
+                StaffScheduleDateOverrideInterval.start,
+                StaffScheduleDateOverrideInterval.end,
+            )
+            .join(StaffScheduleDateOverrideInterval)
+            .where(StaffScheduleDateOverride.employee_id.in_(ids))
+            .where(StaffScheduleDateOverride.target_date == target_date)
+            .order_by(StaffScheduleDateOverrideInterval.position)
         ).all()
-        if not profiles:
-            return base
-        profile_ids = [int(row.id) for row in profiles]
-        manual_ids = {int(row.employee_id) for row in profiles}
-        for employee_id in manual_ids:
-            for weekday in range(7):
-                base.pop((employee_id, weekday), None)
-        rows = self._db.execute(select(StaffSemesterSchedule.employee_id, StaffSemesterScheduleInterval.weekday, StaffSemesterScheduleInterval.start, StaffSemesterScheduleInterval.end).join(StaffSemesterScheduleInterval).where(StaffSemesterSchedule.id.in_(profile_ids))).all()
-        grouped: dict[tuple[int, int], list[tuple[time, time]]] = defaultdict(list)
-        for employee_id, weekday, start, end in rows:
-            grouped[(int(employee_id), int(weekday))].append((start, end))
-        base.update({key: _merge_schedule_intervals(value) for key, value in grouped.items()})
+        if overrides:
+            override_employee_ids = {int(row.employee_id) for row in overrides}
+            for employee_id in override_employee_ids:
+                base[(employee_id, target_date.weekday())] = []
+            grouped_overrides: dict[tuple[int, int], list[tuple[time, time]]] = defaultdict(list)
+            for employee_id, start, end in overrides:
+                grouped_overrides[(int(employee_id), target_date.weekday())].append((start, end))
+            base.update({key: _merge_schedule_intervals(value) for key, value in grouped_overrides.items()})
         return base
 
     def _build_top_employees(
@@ -1455,7 +1542,15 @@ def _staff_daily_status(
     total_events: int,
     scheduled_start: time | None,
     scheduled_end: time | None,
+    exempt_entry: bool = False,
+    exempt_exit: bool = False,
 ) -> str:
+    if exempt_entry and exempt_exit:
+        return "justified"
+    if exempt_entry:
+        return "entry_excused"
+    if exempt_exit:
+        return "exit_excused"
     if first_event is None:
         return "no_events"
     if total_events == 1:

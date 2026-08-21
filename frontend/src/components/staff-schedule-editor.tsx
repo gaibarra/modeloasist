@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import type { StaffSemesterScheduleDay } from "@/lib/auth";
+import { StaffScheduleExceptions } from "@/components/staff-schedule-exceptions";
 
 const DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const current = new Date();
@@ -18,6 +19,7 @@ export function StaffScheduleEditor({ employeeId, employeeName, departmentId }: 
   const [days, setDays] = useState<Block[][]>(Array.from({ length: 7 }, () => []));
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<"semester" | "exceptions">("semester");
 
   useEffect(() => {
     if (!open) return;
@@ -56,12 +58,14 @@ export function StaffScheduleEditor({ employeeId, employeeName, departmentId }: 
     {open && <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/30 px-3 py-6 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-label="Gestionar horario">
       <div className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-white bg-white shadow-2xl">
         <header className="flex items-start justify-between border-b border-border px-5 py-4"><div><p className="section-eyebrow">Horario semestral</p><h2 className="text-xl font-semibold text-(--color-brand-strong)">{employeeName}</h2><p className="text-sm text-(--muted)">Define uno o varios bloques por día.</p></div><button className="secondary-button rounded-full p-2" onClick={() => setOpen(false)} aria-label="Cerrar"><X className="h-4 w-4" /></button></header>
+        <div className="flex gap-2 border-b border-border px-5 pt-3"><button type="button" onClick={() => setTab("semester")} className={`px-3 py-2 text-sm font-semibold ${tab === "semester" ? "border-b-2 border-(--color-brand) text-(--color-brand)" : "text-(--muted)"}`}>Horario semestral</button><button type="button" onClick={() => setTab("exceptions")} className={`px-3 py-2 text-sm font-semibold ${tab === "exceptions" ? "border-b-2 border-(--color-brand) text-(--color-brand)" : "text-(--muted)"}`}>Excepciones aplicadas</button></div>
         <div className="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+          {tab === "exceptions" ? <StaffScheduleExceptions departmentId={departmentId} employeeId={employeeId} /> : <>
           <div className="grid grid-cols-2 gap-3"><label className="text-sm font-semibold">Año<select className="field-input mt-1 w-full" value={year} onChange={(event) => setYear(Number(event.target.value))}>{[current.getFullYear() - 1, current.getFullYear(), current.getFullYear() + 1].map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-sm font-semibold">Semestre<select className="field-input mt-1 w-full" value={semester} onChange={(event) => setSemester(Number(event.target.value))}><option value={1}>Enero – Junio</option><option value={2}>Agosto – Diciembre</option></select></label></div>
           {DAYS.map((label, day) => <section key={label} className="rounded-2xl border border-border p-3"><div className="mb-2 flex items-center justify-between"><h3 className="text-sm font-semibold text-(--color-brand-strong)">{label}</h3><button type="button" className="text-xs font-semibold text-(--color-brand)" onClick={() => addBlock(day)}><Plus className="mr-1 inline h-3.5 w-3.5" />Agregar bloque</button></div>{days[day].length === 0 ? <p className="text-xs text-(--muted)">Sin horario.</p> : <div className="space-y-2">{days[day].map((block, index) => <div key={index} className="flex items-center gap-2"><input className="field-input w-full" type="time" value={block.start} onChange={(event) => updateBlock(day, index, "start", event.target.value)} /><span>–</span><input className="field-input w-full" type="time" value={block.end} onChange={(event) => updateBlock(day, index, "end", event.target.value)} /><button type="button" className="p-2 text-rose-600" onClick={() => removeBlock(day, index)} aria-label="Eliminar bloque"><Trash2 className="h-4 w-4" /></button></div>)}</div>}</section>)}
-          {status && <p className="text-sm text-(--muted)">{status}</p>}
+          {status && <p className="text-sm text-(--muted)">{status}</p>}</>}
         </div>
-        <footer className="flex justify-end gap-3 border-t border-border px-5 py-4"><button className="secondary-button px-4 py-2" onClick={() => setOpen(false)}>Cancelar</button><button className="primary-button px-4 py-2" disabled={saving} onClick={save}>{saving ? "Guardando…" : "Guardar horario"}</button></footer>
+        <footer className="flex justify-end gap-3 border-t border-border px-5 py-4"><button className="secondary-button px-4 py-2" onClick={() => setOpen(false)}>Cancelar</button>{tab === "semester" ? <button className="primary-button px-4 py-2" disabled={saving} onClick={save}>{saving ? "Guardando…" : "Guardar horario"}</button> : null}</footer>
       </div>
     </div>}
   </>;

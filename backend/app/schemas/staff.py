@@ -66,6 +66,108 @@ class StaffSemesterScheduleUpdateRequest(BaseModel):
     days: list[StaffSemesterScheduleDay]
 
 
+class StaffScheduleBulkInstructionRequest(BaseModel):
+    department_id: int = Field(gt=0)
+    instruction: str = Field(min_length=8, max_length=1000)
+
+
+class StaffScheduleBulkApplyRequest(BaseModel):
+    preview_token: str = Field(min_length=20, max_length=20000)
+
+
+class StaffScheduleBulkChange(BaseModel):
+    employee_id: int
+    employee_name: str
+    target_date: date
+    previous_intervals: list[StaffScheduleInterval]
+    new_intervals: list[StaffScheduleInterval]
+
+
+class StaffScheduleBulkExclusion(BaseModel):
+    employee_id: int
+    employee_name: str
+    target_date: date
+    reason: str
+
+
+class StaffScheduleBulkPreview(BaseModel):
+    department_id: int
+    instruction: str
+    operation: str
+    start_date: date
+    end_date: date
+    affected_employees: int
+    changes: list[StaffScheduleBulkChange]
+    exclusions: list[StaffScheduleBulkExclusion]
+    preview_token: str
+
+
+class StaffScheduleBulkApplyResult(BaseModel):
+    operation_id: int
+    affected_employees: int
+    changed_days: int
+
+
+class StaffHolidayWorkAssignmentRequest(BaseModel):
+    department_id: int = Field(gt=0)
+    employee_id: int = Field(gt=0)
+    holiday_date: date
+    intervals: list[StaffScheduleInterval] = [StaffScheduleInterval(start=time(7), end=time(15))]
+
+
+class StaffHolidayWorkAssignmentResponse(BaseModel):
+    employee_id: int
+    holiday_date: date
+    holiday_name: str
+    intervals: list[StaffScheduleInterval]
+
+
+class StaffAttendanceExemptionRequest(BaseModel):
+    department_id: int = Field(gt=0)
+    employee_id: int = Field(gt=0)
+    start_date: date
+    end_date: date
+    exempt_entry: bool = False
+    exempt_exit: bool = False
+    reason: str = Field(min_length=1, max_length=40)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class StaffAttendanceExemptionResponse(BaseModel):
+    id: int
+    target_date: date
+    exempt_entry: bool
+    exempt_exit: bool
+    reason: str
+    note: str | None = None
+    author_name: str | None = None
+    created_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class StaffScheduleExceptionHistoryItem(BaseModel):
+    id: str
+    target_date: date
+    operation: str
+    instruction: str | None = None
+    author_name: str | None = None
+    created_at: datetime | None = None
+    previous_intervals: list[StaffScheduleInterval] = []
+    applied_intervals: list[StaffScheduleInterval]
+    current_intervals: list[StaffScheduleInterval]
+    is_current: bool
+    historical_detail_available: bool
+    deletion_kind: str | None = None
+
+
+class StaffScheduleExceptionHistoryResponse(BaseModel):
+    items: list[StaffScheduleExceptionHistoryItem]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+
+
 class StaffMobilePeriodDay(BaseModel):
     date: date
     first_event: time | None = None
@@ -79,6 +181,12 @@ class StaffMobilePeriodDay(BaseModel):
     scheduled_end: time | None = None
     schedule_intervals: list[StaffScheduleInterval] = []
     has_mixed_schedule: bool = False
+    is_official_holiday: bool = False
+    official_holiday_name: str | None = None
+    holiday_work_authorized: bool = False
+    exempt_entry: bool = False
+    exempt_exit: bool = False
+    exemption_reason: str | None = None
     status: str
 
 
@@ -122,6 +230,12 @@ class StaffEmployeeYearWeekDay(BaseModel):
     scheduled_end: time | None = None
     schedule_intervals: list[StaffScheduleInterval] = []
     has_mixed_schedule: bool = False
+    is_official_holiday: bool = False
+    official_holiday_name: str | None = None
+    holiday_work_authorized: bool = False
+    exempt_entry: bool = False
+    exempt_exit: bool = False
+    exemption_reason: str | None = None
     status: str
 
 
@@ -146,6 +260,7 @@ class StaffEmployeeYearSummary(BaseModel):
     total_days: int
     late_days: int
     punctuality_rate: float
+    justified_days: int = 0
     registered_schedule_intervals: list[StaffScheduleInterval] = []
     weeks: list[StaffEmployeeYearWeek]
 

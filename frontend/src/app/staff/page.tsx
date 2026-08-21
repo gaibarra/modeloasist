@@ -6,6 +6,9 @@ import { PeriodDateRangeFields } from "@/components/period-date-range-fields";
 import { StaffIndividualFilters } from "@/components/staff-individual-filters";
 import { StaffPrintLauncher } from "@/components/staff-print-launcher";
 import { StaffScheduleEditor } from "@/components/staff-schedule-editor";
+import { StaffScheduleBulkDialog } from "@/components/staff-schedule-bulk-dialog";
+import { StaffHolidayWorkButton } from "@/components/staff-holiday-work-button";
+import { StaffAttendanceExemptionDialog } from "@/components/staff-attendance-exemption-dialog";
 import {
   DepartmentSummary,
   StaffDefaultWeek,
@@ -68,7 +71,8 @@ const formatWeekdayChipLabel = (value: string) => {
     return value;
   }
   const weekday = parsed.toLocaleDateString("es-MX", { weekday: "short" }).replace(".", "");
-  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}`;
+  const month = parsed.toLocaleDateString("es-MX", { month: "short" }).replace(".", "");
+  return `${weekday.toUpperCase()} ${String(parsed.getDate()).padStart(2, "0")} ${month.toUpperCase()}`;
 };
 
 function parseLocalDate(value: string) {
@@ -283,6 +287,12 @@ function formatEntryExitSummary(
 }
 
 function getDaySummaryValue(day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay) {
+  if (day.status === "justified") return "Justificado";
+  if (day.status === "entry_excused") return "Entrada justificada";
+  if (day.status === "exit_excused") return "Salida justificada";
+  if (day.status === "official_holiday") {
+    return "Descanso";
+  }
   if (day.status === "absence") {
     return "Falta";
   }
@@ -294,6 +304,16 @@ function getDaySummaryValue(day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay
 }
 
 function getDaySummaryClasses(day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay) {
+  if (["justified", "entry_excused", "exit_excused"].includes(day.status)) {
+    return { container: "border-sky-200 bg-sky-50/90 hover:bg-sky-100/80", label: "text-sky-700", value: "font-extrabold text-sky-800" };
+  }
+  if (day.status === "official_holiday") {
+    return {
+      container: "border-violet-200 bg-violet-50/90 hover:bg-violet-100/80",
+      label: "text-violet-700",
+      value: "font-extrabold text-violet-800",
+    };
+  }
   if (day.status === "absence") {
     return {
       container: "border-rose-200 bg-rose-50/90 hover:bg-rose-100/80",
@@ -373,7 +393,8 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
   const selectedDepartment = departments.find((department) => department.id === requestedDepartmentId) ?? departments[0] ?? null;
   const selectedDepartmentId = selectedDepartment?.id ?? 0;
   const selectedEmployeeId = Number(params.employee_id ?? 0) || 0;
-  const selectedWeeks = [2, 3, 4, 6, 8, 12].includes(Number(params.weeks)) ? Number(params.weeks) : 4;
+  const requestedWeeks = Number(params.weeks);
+  const selectedWeeks = Number.isInteger(requestedWeeks) && requestedWeeks >= 1 && requestedWeeks <= 52 ? requestedWeeks : 4;
   const startDate = params.start_date ?? defaultRange.startDate;
   const endDate = params.end_date ?? defaultRange.endDate;
 
@@ -474,9 +495,12 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                   <p className="section-eyebrow">Consulta por semana</p>
                   <h2 className="mt-1 text-lg font-semibold text-(--color-brand-strong)">Periodo semanal por departamento</h2>
                 </div>
-                {rows.length > 0 && !validationError ? (
-                  <StaffPrintLauncher href={periodPrintHref} label="Imprimir periodo" />
-                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedDepartmentId > 0 ? <StaffScheduleBulkDialog departmentId={selectedDepartmentId} departmentName={selectedDepartmentLabel} /> : null}
+                  {rows.length > 0 && !validationError ? (
+                    <StaffPrintLauncher href={periodPrintHref} label="Imprimir periodo" />
+                  ) : null}
+                </div>
               </div>
 
               <form className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr_1fr_auto]">
@@ -604,7 +628,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
 
             {employeeYearSummary ? (
               <>
-                <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                   <article className="surface-card p-4">
                     <p className="section-eyebrow">Colaborador</p>
                     <p className="mt-2 text-sm font-semibold text-(--color-brand-strong)">{employeeYearSummary.employee_name}</p>
@@ -621,6 +645,10 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                   <article className="surface-card p-4">
                     <p className="section-eyebrow">Faltas</p>
                     <p className="mt-2 text-2xl font-semibold text-rose-700">{absenceDays}</p>
+                  </article>
+                  <article className="surface-card p-4">
+                    <p className="section-eyebrow">Justificados</p>
+                    <p className="mt-2 text-2xl font-semibold text-sky-700">{employeeYearSummary.justified_days}</p>
                   </article>
                   <article className="surface-card p-4">
                     <p className="section-eyebrow">Puntualidad</p>
@@ -728,6 +756,7 @@ function PeriodAttendanceRow({ row }: { row: StaffMobilePeriodRow }) {
           <SummaryBadge label="Faltas" value={String(rowAbsenceDays)} />
           <SummaryBadge label="Eventos" value={String(row.total_events)} />
           <StaffScheduleEditor employeeId={row.employee_id} employeeName={row.employee_name} departmentId={row.department_id} />
+          <StaffAttendanceExemptionDialog departmentId={row.department_id} employeeId={row.employee_id} employeeName={row.employee_name} defaultDate={row.period_start} />
         </div>
       </div>
 
@@ -740,14 +769,14 @@ function PeriodAttendanceRow({ row }: { row: StaffMobilePeriodRow }) {
 
       <div className="mt-3 grid gap-2 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
         {row.days.map((day) => (
-          <DaySummaryBadge key={`${row.employee_id}-${day.date}`} day={day} />
+          <DaySummaryBadge key={`${row.employee_id}-${day.date}`} day={day} employeeId={row.employee_id} employeeName={row.employee_name} departmentId={row.department_id} />
         ))}
       </div>
     </article>
   );
 }
 
-function DaySummaryBadge({ day }: { day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay }) {
+function DaySummaryBadge({ day, employeeId, employeeName, departmentId }: { day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay; employeeId?: number; employeeName?: string; departmentId?: number }) {
   const styles = getDaySummaryClasses(day);
   const summaryValue = getDaySummaryValue(day);
   const absenceEventDetail = getAbsenceEventDetail(day);
@@ -759,13 +788,16 @@ function DaySummaryBadge({ day }: { day: StaffMobilePeriodDay | StaffEmployeeYea
       title={formatCompactDateWithWeekday(day.date)}
     >
       <p className={`text-[10px] font-semibold uppercase tracking-wide ${styles.label}`}>{formatWeekdayChipLabel(day.date)}</p>
+      {day.is_official_holiday ? <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-700">{day.holiday_work_authorized ? "Turno autorizado" : "Descanso oficial"}</p> : null}
       <p className={`mt-1 text-sm leading-tight ${styles.value}`}>{summaryValue}</p>
+      {day.is_official_holiday && day.official_holiday_name ? <p className="mt-1 text-[10px] font-medium leading-tight text-violet-700">{day.official_holiday_name}</p> : null}
       {absenceEventDetail ? (
         <p className="mt-1 text-[10px] font-semibold leading-tight text-rose-700">{absenceEventDetail}</p>
       ) : null}
       {dayScheduleSummary ? (
         <p className="mt-1 text-[10px] leading-tight text-slate-600">{dayScheduleSummary}</p>
       ) : null}
+      {day.is_official_holiday && !day.holiday_work_authorized && employeeId && employeeName && departmentId && day.official_holiday_name ? <StaffHolidayWorkButton departmentId={departmentId} employeeId={employeeId} employeeName={employeeName} holidayDate={day.date} holidayName={day.official_holiday_name} /> : null}
     </div>
   );
 }

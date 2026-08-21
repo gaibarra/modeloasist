@@ -7,6 +7,14 @@ from app.models.inferred_schedule import InferredSchedule
 from app.models.schedule import Schedule
 from app.models.staff_access import Department, DepartmentAlias, EmployeeDepartment, StaffDepartmentScope, StaffUser
 from app.models.staff_schedule import StaffSemesterSchedule, StaffSemesterScheduleInterval
+from app.models.staff_schedule_override import (
+	StaffScheduleBulkOperation,
+	StaffScheduleBulkOperationChange,
+	StaffScheduleDateOverride,
+	StaffScheduleDateOverrideInterval,
+)
+from app.models.staff_holiday_work import StaffHolidayWorkAssignment
+from app.models.staff_attendance_exemption import StaffAttendanceExemption
 
 __all__ = [
 	"AttendanceEvent",
@@ -21,5 +29,11 @@ __all__ = [
 	"StaffDepartmentScope",
 	"StaffSemesterSchedule",
 	"StaffSemesterScheduleInterval",
+	"StaffScheduleBulkOperation",
+	"StaffScheduleBulkOperationChange",
+	"StaffScheduleDateOverride",
+	"StaffScheduleDateOverrideInterval",
+	"StaffHolidayWorkAssignment",
+	"StaffAttendanceExemption",
 	"StaffUser",
 ]
