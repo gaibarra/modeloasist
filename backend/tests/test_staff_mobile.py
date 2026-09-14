@@ -1,9 +1,9 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.api.routes.staff import list_staff_schedule_exceptions, revoke_staff_schedule_exception
+from app.api.routes.staff import create_staff_attendance_exemption, list_staff_schedule_exceptions, revoke_staff_schedule_exception
 from app.dependencies.auth import AuthenticatedActor
 from app.models.attendance_event import AttendanceEvent
 from app.models.employee import Employee
@@ -15,6 +15,7 @@ from app.models.staff_holiday_work import StaffHolidayWorkAssignment
 from app.models.staff_attendance_exemption import StaffAttendanceExemption
 from app.models.schedule import Schedule
 from app.security import hash_password
+from app.schemas.staff import StaffAttendanceExemptionRequest
 from app.services.analytics import AnalyticsService
 from tests.conftest import TestingSessionLocal
 
@@ -239,7 +240,42 @@ def test_official_holiday_is_not_counted_as_absence_without_work_assignment():
     session.commit()
     rows = AnalyticsService(session).staff_daily_attendance(target_date=date(2026, 3, 16), department_id=3)
     assert rows[0].holiday_work_authorized is True
-    assert rows[0].status == "no_events"
+    assert rows[0].status == "absence"
+    session.close()
+
+
+def test_scheduled_day_without_marks_becomes_absence_after_seven_day_grace_period():
+    seed_staff_mobile_data()
+    session = TestingSessionLocal()
+    pending_date = date.today() - timedelta(days=7)
+    elapsed_date = date.today() - timedelta(days=8)
+    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    session.add_all([
+        Schedule(id=99, employee_id=1, nombre="Horario", dia_letra=day_names[pending_date.weekday()], inicio=time(7), fin=time(15)),
+        Schedule(id=100, employee_id=1, nombre="Horario", dia_letra=day_names[elapsed_date.weekday()], inicio=time(7), fin=time(15)),
+    ])
+    session.commit()
+
+    pending_row = AnalyticsService(session).staff_daily_attendance(target_date=pending_date, department_id=3)[0]
+    elapsed_row = AnalyticsService(session).staff_daily_attendance(target_date=elapsed_date, department_id=3)[0]
+
+    assert pending_row.total_events == 0
+    assert pending_row.status == "no_events"
+    assert elapsed_row.total_events == 0
+    assert elapsed_row.status == "absence"
+    session.close()
+
+
+def test_single_attendance_mark_is_absence_without_waiting_for_the_grace_period():
+    seed_staff_mobile_data()
+    session = TestingSessionLocal()
+    session.add(Schedule(id=99, employee_id=1, nombre="Horario", dia_letra="Viernes", inicio=time(7), fin=time(15)))
+    session.commit()
+
+    row = AnalyticsService(session).staff_daily_attendance(target_date=date(2026, 3, 27), department_id=3)[0]
+
+    assert row.total_events == 1
+    assert row.status == "absence"
     session.close()
 
 
@@ -252,6 +288,31 @@ def test_personal_exemption_marks_attendance_as_justified_without_touching_event
     assert row.status == "entry_excused"
     assert row.exempt_entry is True
     assert row.first_event == time(7)
+    session.close()
+
+
+def test_home_office_exemption_justifies_both_attendance_marks():
+    seed_staff_mobile_data()
+    session = TestingSessionLocal()
+    staff = session.query(StaffUser).filter(StaffUser.id == 10).one()
+    actor = AuthenticatedActor(actor_type="staff", is_admin=False, must_change_password=False, staff=staff, department_ids={3})
+    result = create_staff_attendance_exemption(
+        StaffAttendanceExemptionRequest(
+            department_id=3,
+            employee_id=1,
+            start_date=date(2026, 8, 24),
+            end_date=date(2026, 12, 31),
+            reason="home_office",
+        ),
+        actor=actor,
+        db=session,
+    )
+    assert len(result) == 130
+    assert result[0].exempt_entry is True
+    assert result[0].exempt_exit is True
+    row = AnalyticsService(session).staff_daily_attendance(target_date=date(2026, 8, 24), department_id=3)[0]
+    assert row.status == "justified"
+    assert row.exemption_reason == "home_office"
     session.close()
 
 

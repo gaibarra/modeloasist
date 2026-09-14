@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { ChangePasswordLink } from "@/components/change-password-link";
 import { InstitutionHeader } from "@/components/institution-header";
 import { LogoutButton } from "@/components/logout-button";
@@ -29,6 +30,9 @@ type StaffSearchParams = {
   end_date?: string;
   employee_id?: string;
   weeks?: string;
+  filter?: string;
+  q?: string;
+  sort?: string;
 };
 
 type StaffPageProps = {
@@ -36,6 +40,17 @@ type StaffPageProps = {
 };
 
 type StaffView = "period" | "individual";
+type PeriodFilter = "incidents" | "all" | "absence" | "late" | "justified" | "no_events";
+type PeriodSort = "severity" | "name";
+
+const PERIOD_FILTERS: Array<{ value: PeriodFilter; label: string }> = [
+  { value: "incidents", label: "Solo incidencias" },
+  { value: "all", label: "Todos" },
+  { value: "absence", label: "Faltas" },
+  { value: "late", label: "Retardos" },
+  { value: "justified", label: "Justificados" },
+  { value: "no_events", label: "Sin eventos" },
+];
 
 const formatTime = (value: string | null) => (value ? value.slice(0, 5) : "—");
 const formatCompactDateWithWeekday = (value: string) => {
@@ -275,6 +290,65 @@ function countAbsenceStatuses(days: Array<StaffMobilePeriodDay | StaffEmployeeYe
   return days.filter((day) => day.status === "absence").length;
 }
 
+function countJustifiedStatuses(days: Array<StaffMobilePeriodDay | StaffEmployeeYearWeekDay>) {
+  return days.filter((day) => ["justified", "entry_excused", "exit_excused"].includes(day.status)).length;
+}
+
+function normalizePeriodFilter(value?: string): PeriodFilter {
+  return PERIOD_FILTERS.some((filter) => filter.value === value) ? value as PeriodFilter : "incidents";
+}
+
+function normalizePeriodSort(value?: string): PeriodSort {
+  return value === "severity" ? "severity" : "name";
+}
+
+function hasNoEvent(day: StaffMobilePeriodDay) {
+  return day.status === "no_events" && day.total_events === 0;
+}
+
+function hasIncident(day: StaffMobilePeriodDay) {
+  // Sin marcas también requiere revisión: puede convertirse en una exención,
+  // una carga pendiente o, tras el margen aplicable, una falta calculada.
+  return hasNoEvent(day) || ["absence", "late", "left_early", "justified", "entry_excused", "exit_excused"].includes(day.status);
+}
+
+function matchesPeriodFilter(row: StaffMobilePeriodRow, filter: PeriodFilter) {
+  if (filter === "all") return true;
+  if (filter === "incidents") return row.days.some(hasIncident);
+  if (filter === "absence") return row.days.some((day) => day.status === "absence");
+  if (filter === "late") return row.days.some((day) => day.status === "late" || day.status === "left_early");
+  if (filter === "justified") return row.days.some((day) => ["justified", "entry_excused", "exit_excused"].includes(day.status));
+  return row.days.some(hasNoEvent);
+}
+
+function getRowSeverity(row: StaffMobilePeriodRow) {
+  return row.days.reduce((score, day) => score + (
+    day.status === "absence" ? 100 :
+    day.status === "late" || day.status === "left_early" ? 10 :
+    hasIncident(day) ? 1 : 0
+  ), 0);
+}
+
+function getRowHeadline(row: StaffMobilePeriodRow) {
+  const absences = countAbsenceStatuses(row.days);
+  const late = row.days.filter((day) => day.status === "late" || day.status === "left_early").length;
+  const justified = countJustifiedStatuses(row.days);
+  if (absences) return `${absences} ${absences === 1 ? "falta" : "faltas"}`;
+  if (late) return `${late} ${late === 1 ? "incidencia de horario" : "incidencias de horario"}`;
+  if (justified) {
+    const homeOffice = row.days.some((day) => day.exemption_reason === "home_office");
+    return homeOffice ? "Home office" : `${justified} ${justified === 1 ? "justificado" : "justificados"}`;
+  }
+  return "Sin incidencias";
+}
+
+function getRowHeadlineClass(row: StaffMobilePeriodRow) {
+  if (row.days.some((day) => day.status === "absence")) return "bg-rose-100 text-rose-800";
+  if (row.days.some((day) => day.status === "late" || day.status === "left_early")) return "bg-amber-100 text-amber-800";
+  if (row.days.some((day) => ["justified", "entry_excused", "exit_excused"].includes(day.status))) return "bg-sky-100 text-sky-800";
+  return "bg-emerald-100 text-emerald-800";
+}
+
 function formatEntryExitSummary(
   entryEvent: string | null,
   exitEvent: string | null,
@@ -301,6 +375,18 @@ function getDaySummaryValue(day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay
     return formatEntryExitSummary(day.entry_event, day.exit_event, day.entry_event_inferred, day.exit_event_inferred);
   }
   return "X";
+}
+
+function formatExemptionReason(reason: string | null) {
+  const labels: Record<string, string> = {
+    incapacidad: "Incapacidad",
+    comision_institucional: "Comisión institucional",
+    permiso_staff: "Permiso de staff",
+    fuerza_mayor: "Fuerza mayor",
+    home_office: "Home office",
+    otro: "Otro",
+  };
+  return reason ? labels[reason] ?? reason : null;
 }
 
 function getDaySummaryClasses(day: StaffMobilePeriodDay | StaffEmployeeYearWeekDay) {
@@ -382,6 +468,32 @@ function buildStaffPrintHref(
   return buildHref("/staff/print", currentParams, overrides);
 }
 
+function PeriodFilterNavigation({ currentParams, activeFilter }: { currentParams: StaffSearchParams; activeFilter: PeriodFilter }) {
+  return (
+    <nav className="flex flex-wrap gap-2" aria-label="Filtrar colaboradores">
+      {PERIOD_FILTERS.map((filter) => {
+        const active = filter.value === activeFilter;
+        return <Link
+          key={filter.value}
+          href={buildStaffHref(currentParams, { view: "period", filter: filter.value })}
+          aria-current={active ? "page" : undefined}
+          className={`min-h-11 rounded-full px-3 py-2 text-xs font-bold transition ${active ? "bg-(--color-brand) text-white shadow-sm" : "border border-border bg-white text-(--color-brand) hover:border-(--color-brand-soft) hover:bg-(--color-brand-tint)"}`}
+        >
+          {filter.label}
+        </Link>;
+      })}
+    </nav>
+  );
+}
+
+function PeriodMetricLink({ label, value, href, tone = "default" }: { label: string; value: string; href: string; tone?: "default" | "danger" | "warning" | "info" }) {
+  const valueClass = tone === "danger" ? "text-rose-700" : tone === "warning" ? "text-amber-700" : tone === "info" ? "text-sky-700" : "text-(--color-brand-strong)";
+  return <Link href={href} className="surface-card min-h-28 p-4 transition hover:-translate-y-0.5 hover:border-(--color-brand-soft) hover:shadow-md focus:outline-none focus:ring-4 focus:ring-(--color-brand-tint)">
+    <p className="section-eyebrow">{label}</p>
+    <p className={`mt-2 text-2xl font-semibold ${valueClass}`}>{value}</p>
+  </Link>;
+}
+
 export default async function StaffMobilePage({ searchParams }: StaffPageProps) {
   const [user, resolvedSearchParams] = await Promise.all([requireStaffUser(), searchParams]);
   const params = resolvedSearchParams ?? {};
@@ -395,6 +507,9 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
   const selectedEmployeeId = Number(params.employee_id ?? 0) || 0;
   const requestedWeeks = Number(params.weeks);
   const selectedWeeks = Number.isInteger(requestedWeeks) && requestedWeeks >= 1 && requestedWeeks <= 52 ? requestedWeeks : 4;
+  const activePeriodFilter = normalizePeriodFilter(params.filter);
+  const activePeriodSort = normalizePeriodSort(params.sort);
+  const searchQuery = (params.q ?? "").trim();
   const startDate = params.start_date ?? defaultRange.startDate;
   const endDate = params.end_date ?? defaultRange.endDate;
 
@@ -416,6 +531,13 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
   const totalRegisteredDays = rows.reduce((sum, row) => sum + row.active_days, 0);
   const totalLateDays = rows.reduce((sum, row) => sum + countLateDays(row.days), 0);
   const totalAbsenceDays = rows.reduce((sum, row) => sum + countAbsenceStatuses(row.days), 0);
+  const totalJustifiedDays = rows.reduce((sum, row) => sum + countJustifiedStatuses(row.days), 0);
+  const visibleRows = rows
+    .filter((row) => matchesPeriodFilter(row, activePeriodFilter))
+    .filter((row) => !searchQuery || `${row.employee_name} ${row.employee_email ?? ""}`.toLocaleLowerCase("es-MX").includes(searchQuery.toLocaleLowerCase("es-MX")))
+    .sort((left, right) => activePeriodSort === "name"
+      ? left.employee_name.localeCompare(right.employee_name, "es-MX")
+      : getRowSeverity(right) - getRowSeverity(left) || left.employee_name.localeCompare(right.employee_name, "es-MX"));
   const selectedDepartmentLabel = selectedDepartment
     ? `${selectedDepartment.campus ? `${selectedDepartment.campus} · ` : ""}${selectedDepartment.name}`
     : "Sin selección";
@@ -435,7 +557,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
 
   return (
     <div className="page-shell text-foreground">
-      <div className="mx-auto flex max-w-5xl flex-col gap-5">
+      <div className="mx-auto flex max-w-6xl flex-col gap-5">
         <InstitutionHeader
           eyebrow="Consulta de asistencia"
           title={user.full_name}
@@ -489,11 +611,12 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
           </section>
         ) : view === "period" ? (
           <>
-            <section className="surface-card p-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <section className="brand-panel p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <p className="section-eyebrow">Consulta por semana</p>
-                  <h2 className="mt-1 text-lg font-semibold text-(--color-brand-strong)">Periodo semanal por departamento</h2>
+                  <p className="section-eyebrow">Monitor de incidencias</p>
+                  <h2 className="mt-1 text-lg font-semibold text-(--color-brand-strong)">Asistencia por departamento</h2>
+                  <p className="mt-1 text-sm text-(--muted)">{selectedDepartmentLabel} · {formatShortDateLabel(startDate)} → {formatShortDateLabel(endDate)}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {selectedDepartmentId > 0 ? <StaffScheduleBulkDialog departmentId={selectedDepartmentId} departmentName={selectedDepartmentLabel} /> : null}
@@ -503,8 +626,9 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                 </div>
               </div>
 
-              <form className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr_1fr_auto]">
+              <form className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr_auto]">
                 <input type="hidden" name="view" value="period" />
+                <input type="hidden" name="filter" value={activePeriodFilter} />
                 <label className="space-y-2 text-sm font-medium text-foreground">
                   Departamento
                   <select
@@ -521,44 +645,45 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                   </select>
                 </label>
                 <PeriodDateRangeFields startDate={startDate} endDate={endDate} />
+                <label className="space-y-2 text-sm font-medium text-foreground">
+                  Buscar
+                  <span className="relative block">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--muted)" aria-hidden="true" />
+                    <input name="q" defaultValue={searchQuery} className="field-input pl-9" placeholder="Nombre o correo" />
+                  </span>
+                </label>
+                <label className="space-y-2 text-sm font-medium text-foreground">
+                  Ordenar por
+                  <select name="sort" defaultValue={activePeriodSort} className="field-input">
+                    <option value="name">Nombre</option>
+                    <option value="severity">Severidad</option>
+                  </select>
+                </label>
                 <button
                   type="submit"
-                  className="primary-button mt-auto px-5 py-3 text-sm"
+                  className="primary-button mt-auto min-h-12 px-5 py-3 text-sm"
                 >
                   Consultar
                 </button>
               </form>
+              <div className="mt-4 hidden items-center justify-between gap-3 lg:flex">
+                <PeriodFilterNavigation currentParams={params} activeFilter={activePeriodFilter} />
+                {(activePeriodFilter !== "incidents" || searchQuery || activePeriodSort !== "name") ? <Link href={buildStaffHref(params, { filter: null, q: null, sort: null })} className="ghost-button min-h-11 px-3 text-xs">Limpiar filtros</Link> : null}
+              </div>
+              <details className="mt-4 rounded-2xl border border-border bg-white p-3 lg:hidden">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-bold text-(--color-brand-strong)"><span className="inline-flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" aria-hidden="true" />Filtros de resultados</span><ChevronDown className="h-4 w-4" aria-hidden="true" /></summary>
+                <div className="mt-3"><PeriodFilterNavigation currentParams={params} activeFilter={activePeriodFilter} /></div>
+                {(activePeriodFilter !== "incidents" || searchQuery || activePeriodSort !== "name") ? <Link href={buildStaffHref(params, { filter: null, q: null, sort: null })} className="ghost-button mt-3 min-h-11 px-3 text-xs">Limpiar filtros</Link> : null}
+              </details>
             </section>
 
-            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Departamento</p>
-                <p className="mt-2 text-sm font-semibold text-(--color-brand-strong)">{selectedDepartmentLabel}</p>
-              </article>
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Periodo consultado</p>
-                <p className="mt-2 text-sm font-semibold text-(--color-brand-strong)">{startDate} → {endDate}</p>
-              </article>
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Colaboradores</p>
-                <p className="mt-2 text-2xl font-semibold text-(--color-brand-strong)">{rows.length}</p>
-              </article>
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Días registrados</p>
-                <p className="mt-2 text-2xl font-semibold text-(--color-brand-strong)">{totalRegisteredDays}</p>
-              </article>
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Retardos</p>
-                <p className="mt-2 text-2xl font-semibold text-(--color-brand-strong)">{totalLateDays}</p>
-              </article>
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Faltas</p>
-                <p className="mt-2 text-2xl font-semibold text-rose-700">{totalAbsenceDays}</p>
-              </article>
-              <article className="surface-card p-4">
-                <p className="section-eyebrow">Eventos acumulados</p>
-                <p className="mt-2 text-2xl font-semibold text-(--color-brand-strong)">{totalEvents}</p>
-              </article>
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6" aria-label="Indicadores del periodo">
+              <PeriodMetricLink label="Colaboradores" value={String(rows.length)} href={buildStaffHref(params, { view: "period", filter: "all" })} />
+              <PeriodMetricLink label="Días registrados" value={String(totalRegisteredDays)} href={buildStaffHref(params, { view: "period", filter: "all" })} />
+              <PeriodMetricLink label="Retardos" value={String(totalLateDays)} tone="warning" href={buildStaffHref(params, { view: "period", filter: "late" })} />
+              <PeriodMetricLink label="Faltas" value={String(totalAbsenceDays)} tone="danger" href={buildStaffHref(params, { view: "period", filter: "absence" })} />
+              <PeriodMetricLink label="Justificados" value={String(totalJustifiedDays)} tone="info" href={buildStaffHref(params, { view: "period", filter: "justified" })} />
+              <PeriodMetricLink label="Eventos" value={String(totalEvents)} href={buildStaffHref(params, { view: "period", filter: "all" })} />
             </section>
 
             <section className="space-y-3">
@@ -574,8 +699,20 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                     ? "Ajusta el rango y vuelve a consultar."
                     : "No hay colaboradores o registros para este departamento en el periodo seleccionado."}
                 </div>
+              ) : visibleRows.length === 0 ? (
+                <div className="surface-card border-dashed p-6 text-sm text-(--muted)">
+                  <p>No hay colaboradores que coincidan con los filtros actuales.</p>
+                  <Link href={buildStaffHref(params, { view: "period", filter: "all", q: null })} className="ghost-button mt-4 min-h-11 px-3 text-xs">
+                    Ver toda la plantilla
+                  </Link>
+                </div>
               ) : (
-                rows.map((row) => <PeriodAttendanceRow key={`${row.employee_id}-${row.period_start}-${row.period_end}`} row={row} />)
+                <>
+                  <p className="px-1 text-sm text-(--muted)" role="status">
+                    Mostrando {visibleRows.length} de {rows.length} colaboradores · {PERIOD_FILTERS.find((filter) => filter.value === activePeriodFilter)?.label.toLocaleLowerCase("es-MX")}
+                  </p>
+                  {visibleRows.map((row) => <PeriodAttendanceRow key={`${row.employee_id}-${row.period_start}-${row.period_end}`} row={row} />)}
+                </>
               )}
             </section>
           </>
@@ -741,36 +878,62 @@ function WeeklyAttendanceRow({ week }: { week: StaffEmployeeYearWeek }) {
 function PeriodAttendanceRow({ row }: { row: StaffMobilePeriodRow }) {
   const rowLateDays = countLateDays(row.days);
   const rowAbsenceDays = countAbsenceStatuses(row.days);
+  const rowJustifiedDays = countJustifiedStatuses(row.days);
+  const headline = getRowHeadline(row);
+  const headlineClass = getRowHeadlineClass(row);
 
   return (
-    <article className="surface-card p-4 transition-colors duration-200 hover:bg-slate-50/40">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-(--color-brand-strong)">{row.employee_name}</h2>
-          <p className="text-xs text-(--muted)">{row.employee_email ?? "Sin correo registrado"}</p>
+    <article className="surface-card overflow-visible p-0 transition-shadow duration-200 hover:shadow-md">
+      <header className="grid gap-4 border-b border-border bg-slate-50/70 p-4 xl:grid-cols-[minmax(15rem,1fr)_minmax(20rem,auto)_auto] xl:items-center">
+        <div className="min-w-0">
+          <p className="section-eyebrow">Colaborador</p>
+          <h2 className="mt-1 truncate text-base font-semibold text-(--color-brand-strong)">{row.employee_name}</h2>
+          <p className="truncate text-xs text-(--muted)">{row.employee_email ?? "Sin correo registrado"}</p>
           <p className="mt-1 text-xs text-(--muted)">{row.campus ?? "Sin campus"} · {row.department_name}</p>
+          <p className="mt-2 text-xs font-semibold text-(--color-brand-strong)">{formatShortDateLabel(row.period_start)} → {formatShortDateLabel(row.period_end)}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <SummaryBadge label="Días registrados" value={String(row.active_days)} />
-          <SummaryBadge label="Retardos" value={String(rowLateDays)} />
-          <SummaryBadge label="Faltas" value={String(rowAbsenceDays)} />
-          <SummaryBadge label="Eventos" value={String(row.total_events)} />
+
+        <div className="flex flex-col gap-2 xl:items-end">
+          <span className={`inline-flex min-h-8 items-center rounded-full px-3 py-1 text-xs font-extrabold ${headlineClass}`}>
+            {rowAbsenceDays ? <AlertTriangle className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> : rowLateDays ? <Clock3 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> : rowJustifiedDays ? <ShieldCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+            {headline}
+          </span>
+          <div className="flex flex-wrap gap-1.5 xl:justify-end" aria-label={`Resumen de ${row.employee_name}`}>
+            <SummaryBadge label="Días" value={String(row.active_days)} />
+            <SummaryBadge label="Retardos" value={String(rowLateDays)} />
+            <SummaryBadge label="Faltas" value={String(rowAbsenceDays)} />
+            <SummaryBadge label="Justificados" value={String(rowJustifiedDays)} />
+            <SummaryBadge label="Eventos" value={String(row.total_events)} />
+          </div>
+        </div>
+
+        <div className="relative flex flex-wrap items-center gap-2 xl:justify-end">
           <StaffScheduleEditor employeeId={row.employee_id} employeeName={row.employee_name} departmentId={row.department_id} />
-          <StaffAttendanceExemptionDialog departmentId={row.department_id} employeeId={row.employee_id} employeeName={row.employee_name} defaultDate={row.period_start} />
+          <details className="relative">
+            <summary className="secondary-button flex min-h-11 cursor-pointer list-none items-center gap-1.5 px-3 text-xs font-bold">
+              Más acciones <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            </summary>
+            <div className="absolute right-0 z-30 mt-2 min-w-52 rounded-2xl border border-border bg-white p-2 shadow-xl">
+              <StaffAttendanceExemptionDialog
+                departmentId={row.department_id}
+                employeeId={row.employee_id}
+                employeeName={row.employee_name}
+                defaultDate={row.period_start}
+              />
+            </div>
+          </details>
         </div>
-      </div>
+      </header>
 
-      <div className="mt-3 flex items-center gap-2.5">
-        <div className="rounded-2xl border border-border bg-white px-3 py-2.5">
-          <h3 className="text-[13px] font-semibold text-(--color-brand-strong)">{formatShortDateLabel(row.period_start)} → {formatShortDateLabel(row.period_end)}</h3>
-          <p className="mt-1 text-[11px] text-(--muted)">{row.active_days} días con registros · {row.total_events} eventos</p>
+      <div className="p-4">
+        <p className="mb-2 text-xs font-semibold text-(--muted)">Detalle semanal</p>
+        <div className="overflow-x-auto pb-1" aria-label={`Semana de asistencia de ${row.employee_name}`}>
+          <div className="grid min-w-[47rem] grid-cols-7 gap-2">
+            {row.days.map((day) => (
+              <DaySummaryBadge key={`${row.employee_id}-${day.date}`} day={day} employeeId={row.employee_id} employeeName={row.employee_name} departmentId={row.department_id} />
+            ))}
+          </div>
         </div>
-      </div>
-
-      <div className="mt-3 grid gap-2 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
-        {row.days.map((day) => (
-          <DaySummaryBadge key={`${row.employee_id}-${day.date}`} day={day} employeeId={row.employee_id} employeeName={row.employee_name} departmentId={row.department_id} />
-        ))}
       </div>
     </article>
   );
@@ -781,15 +944,17 @@ function DaySummaryBadge({ day, employeeId, employeeName, departmentId }: { day:
   const summaryValue = getDaySummaryValue(day);
   const absenceEventDetail = getAbsenceEventDetail(day);
   const dayScheduleSummary = getDayScheduleSummary(day);
+  const exemptionReason = formatExemptionReason(day.exemption_reason);
 
   return (
     <div
-      className={`rounded-2xl border px-3 py-2 transition-colors duration-200 ${styles.container}`}
+      className={`min-h-28 rounded-2xl border px-3 py-2 transition-colors duration-200 ${styles.container}`}
       title={formatCompactDateWithWeekday(day.date)}
     >
       <p className={`text-[10px] font-semibold uppercase tracking-wide ${styles.label}`}>{formatWeekdayChipLabel(day.date)}</p>
       {day.is_official_holiday ? <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-700">{day.holiday_work_authorized ? "Turno autorizado" : "Descanso oficial"}</p> : null}
       <p className={`mt-1 text-sm leading-tight ${styles.value}`}>{summaryValue}</p>
+      {exemptionReason ? <p className="mt-1 text-[10px] font-semibold leading-tight text-sky-700">Motivo: {exemptionReason}</p> : null}
       {day.is_official_holiday && day.official_holiday_name ? <p className="mt-1 text-[10px] font-medium leading-tight text-violet-700">{day.official_holiday_name}</p> : null}
       {absenceEventDetail ? (
         <p className="mt-1 text-[10px] font-semibold leading-tight text-rose-700">{absenceEventDetail}</p>

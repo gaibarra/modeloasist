@@ -72,7 +72,9 @@ from app.services.official_holidays import official_holiday_name
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
-_EXEMPTION_REASONS = {"incapacidad", "comision_institucional", "permiso_staff", "fuerza_mayor", "otro"}
+_EXEMPTION_REASONS = {"incapacidad", "comision_institucional", "permiso_staff", "fuerza_mayor", "home_office", "otro"}
+_MAX_STANDARD_EXEMPTION_DAYS = 63
+_MAX_HOME_OFFICE_EXEMPTION_DAYS = 184
 
 
 @router.post("/attendance-exemptions", response_model=list[StaffAttendanceExemptionResponse], status_code=status.HTTP_201_CREATED)
@@ -86,13 +88,18 @@ def create_staff_attendance_exemption(
     reason = payload.reason.strip().lower()
     if reason not in _EXEMPTION_REASONS:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El motivo de exención no es válido.")
-    if not payload.exempt_entry and not payload.exempt_exit:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debes exentar entrada, salida o ambas.")
     note = (payload.note or "").strip() or None
     if reason == "otro" and note is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El motivo “Otro” requiere una nota.")
-    if payload.end_date < payload.start_date or (payload.end_date - payload.start_date).days > 62:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El rango de exención debe ser válido y no exceder 63 días.")
+    # Home office exenta siempre ambas marcas; evita que una solicitud manual
+    # deje al colaborador con solo media jornada justificada.
+    exempt_entry = True if reason == "home_office" else payload.exempt_entry
+    exempt_exit = True if reason == "home_office" else payload.exempt_exit
+    if not exempt_entry and not exempt_exit:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debes exentar entrada, salida o ambas.")
+    max_days = _MAX_HOME_OFFICE_EXEMPTION_DAYS if reason == "home_office" else _MAX_STANDARD_EXEMPTION_DAYS
+    if payload.end_date < payload.start_date or (payload.end_date - payload.start_date).days >= max_days:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"El rango de exención debe ser válido y no exceder {max_days} días.")
     results = []
     for offset in range((payload.end_date - payload.start_date).days + 1):
         target_date = payload.start_date + timedelta(days=offset)
@@ -103,8 +110,8 @@ def create_staff_attendance_exemption(
         if exemption is None:
             exemption = StaffAttendanceExemption(employee_id=payload.employee_id, department_id=payload.department_id, target_date=target_date)
             db.add(exemption)
-        exemption.exempt_entry = payload.exempt_entry
-        exemption.exempt_exit = payload.exempt_exit
+        exemption.exempt_entry = exempt_entry
+        exemption.exempt_exit = exempt_exit
         exemption.reason = reason
         exemption.note = note
         exemption.granted_by_staff_user_id = actor.staff.id if actor.staff else None

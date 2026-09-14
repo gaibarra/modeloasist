@@ -21,8 +21,14 @@ type StaffPrintPageProps = {
     end_date?: string;
     employee_id?: string;
     weeks?: string;
+    filter?: string;
+    q?: string;
+    sort?: string;
   }>;
 };
+
+type PeriodFilter = "incidents" | "all" | "absence" | "late" | "justified" | "no_events";
+type PeriodSort = "severity" | "name";
 
 const formatTime = (value: string | null) => (value ? value.slice(0, 5) : "—");
 const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
@@ -135,6 +141,18 @@ const formatStatus = (value: StaffMobilePeriodDay["status"]) => {
   }
 };
 
+const formatExemptionReason = (reason: string | null) => {
+  const labels: Record<string, string> = {
+    incapacidad: "Incapacidad",
+    comision_institucional: "Comisión institucional",
+    permiso_staff: "Permiso de staff",
+    fuerza_mayor: "Fuerza mayor",
+    home_office: "Home office",
+    otro: "Otro",
+  };
+  return reason ? labels[reason] ?? reason : null;
+};
+
 function isAbsenceStatus(value: StaffMobilePeriodDay["status"] | StaffEmployeeYearWeekDay["status"]) {
   return value === "absence";
 }
@@ -183,6 +201,45 @@ function countLateDays(days: Array<StaffMobilePeriodDay | StaffEmployeeYearWeekD
 
 function countAbsenceStatuses(days: Array<StaffMobilePeriodDay | StaffEmployeeYearWeekDay>) {
   return days.filter((day) => day.status === "absence").length;
+}
+
+function countJustifiedStatuses(days: StaffMobilePeriodDay[]) {
+  return days.filter((day) => ["justified", "entry_excused", "exit_excused"].includes(day.status)).length;
+}
+
+function normalizePeriodFilter(value?: string): PeriodFilter {
+  return ["incidents", "all", "absence", "late", "justified", "no_events"].includes(value ?? "")
+    ? value as PeriodFilter
+    : "incidents";
+}
+
+function normalizePeriodSort(value?: string): PeriodSort {
+  return value === "severity" ? "severity" : "name";
+}
+
+function isJustifiedStatus(day: StaffMobilePeriodDay) {
+  return ["justified", "entry_excused", "exit_excused"].includes(day.status);
+}
+
+function hasIncident(day: StaffMobilePeriodDay) {
+  return (day.status === "no_events" && day.total_events === 0) || day.status === "absence" || day.status === "late" || day.status === "left_early" || isJustifiedStatus(day);
+}
+
+function matchesPeriodFilter(row: StaffMobilePeriodRow, filter: PeriodFilter) {
+  if (filter === "all") return true;
+  if (filter === "incidents") return row.days.some(hasIncident);
+  if (filter === "absence") return row.days.some((day) => day.status === "absence");
+  if (filter === "late") return row.days.some((day) => day.status === "late" || day.status === "left_early");
+  if (filter === "justified") return row.days.some(isJustifiedStatus);
+  return row.days.some((day) => day.status === "no_events" && day.total_events === 0);
+}
+
+function getRowSeverity(row: StaffMobilePeriodRow) {
+  return row.days.reduce((score, day) => score + (
+    day.status === "absence" ? 100 :
+    day.status === "late" || day.status === "left_early" ? 10 :
+    hasIncident(day) ? 1 : 0
+  ), 0);
 }
 
 function getWeekdayIndex(value: string) {
@@ -236,6 +293,9 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
   const selectedEmployeeId = Number(params.employee_id ?? 0) || 0;
   const requestedWeeks = Number(params.weeks);
   const selectedWeeks = Number.isInteger(requestedWeeks) && requestedWeeks >= 1 && requestedWeeks <= 52 ? requestedWeeks : 4;
+  const activePeriodFilter = normalizePeriodFilter(params.filter);
+  const activePeriodSort = normalizePeriodSort(params.sort);
+  const searchQuery = (params.q ?? "").trim().toLocaleLowerCase("es-MX");
   const startDate = params.start_date ?? defaultRange.startDate;
   const endDate = params.end_date ?? defaultRange.endDate;
   const validationError = validatePeriodRange(startDate, endDate);
@@ -254,10 +314,17 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
   const absenceDays = employeeYearSummary ? countAbsenceDays(employeeYearSummary) : 0;
 
   const generatedAt = formatTimestamp(new Date());
-  const totalEvents = rows.reduce((sum, row) => sum + row.total_events, 0);
-  const totalRegisteredDays = rows.reduce((sum, row) => sum + row.active_days, 0);
-  const totalLateDays = rows.reduce((sum, row) => sum + countLateDays(row.days), 0);
-  const totalAbsenceDays = rows.reduce((sum, row) => sum + countAbsenceStatuses(row.days), 0);
+  const visibleRows = rows
+    .filter((row) => matchesPeriodFilter(row, activePeriodFilter))
+    .filter((row) => !searchQuery || `${row.employee_name} ${row.employee_email ?? ""}`.toLocaleLowerCase("es-MX").includes(searchQuery))
+    .sort((left, right) => activePeriodSort === "name"
+      ? left.employee_name.localeCompare(right.employee_name, "es-MX")
+      : getRowSeverity(right) - getRowSeverity(left) || left.employee_name.localeCompare(right.employee_name, "es-MX"));
+  const visibleTotalEvents = visibleRows.reduce((sum, row) => sum + row.total_events, 0);
+  const visibleRegisteredDays = visibleRows.reduce((sum, row) => sum + row.active_days, 0);
+  const visibleLateDays = visibleRows.reduce((sum, row) => sum + countLateDays(row.days), 0);
+  const visibleAbsenceDays = visibleRows.reduce((sum, row) => sum + countAbsenceStatuses(row.days), 0);
+  const visibleJustifiedDays = visibleRows.reduce((sum, row) => sum + countJustifiedStatuses(row.days), 0);
 
   return (
     <main className="print-report-shell min-h-screen bg-(--page-background) px-4 py-6 text-foreground sm:px-6">
@@ -427,17 +494,21 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
             ) : null}
             {!validationError ? (
               <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-                <PrintMetricCard label="Colaboradores" value={String(rows.length)} />
-                <PrintMetricCard label="Días registrados" value={String(totalRegisteredDays)} />
-                <PrintMetricCard label="Retardos" value={String(totalLateDays)} />
-                <PrintMetricCard label="Faltas" value={String(totalAbsenceDays)} />
-                <PrintMetricCard label="Eventos acumulados" value={String(totalEvents)} />
-                <PrintMetricCard label="Periodo" value={`${startDate} → ${endDate}`} />
+                <PrintMetricCard label="Colaboradores" value={String(visibleRows.length)} />
+                <PrintMetricCard label="Días registrados" value={String(visibleRegisteredDays)} />
+                <PrintMetricCard label="Retardos" value={String(visibleLateDays)} />
+                <PrintMetricCard label="Faltas" value={String(visibleAbsenceDays)} />
+                <PrintMetricCard label="Justificados" value={String(visibleJustifiedDays)} />
+                <PrintMetricCard label="Eventos" value={String(visibleTotalEvents)} />
               </div>
             ) : null}
             {rows.length === 0 ? (
               <div className="surface-card p-6 text-sm text-(--muted)">
                 {validationError ? "Corrige el rango antes de imprimir." : "No hay resultados para imprimir en el periodo seleccionado."}
+              </div>
+            ) : visibleRows.length === 0 ? (
+              <div className="surface-card p-6 text-sm text-(--muted)">
+                No hay colaboradores que coincidan con los filtros de la consulta.
               </div>
             ) : (
               <article className="print-flow-card overflow-hidden rounded-3xl border border-border bg-white shadow-sm">
@@ -459,7 +530,7 @@ export default async function StaffPrintPage({ searchParams }: StaffPrintPagePro
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((row) => {
+                      {visibleRows.map((row) => {
                         const dayMap = buildWeekdayMap(row.days);
                         return (
                           <tr key={`${row.employee_id}-${row.period_start}-${row.period_end}`} className="print-table-row">
@@ -604,6 +675,7 @@ function ExecutiveDayCell({ day, dateLabel }: { day: StaffMobilePeriodDay | Staf
       {day.is_official_holiday ? <p className="print-day-meta">{day.holiday_work_authorized ? "Turno autorizado" : day.official_holiday_name}</p> : null}
       <p className="print-day-schedule">Hor. {formatScheduleIntervals(day.schedule_intervals, day.scheduled_start, day.scheduled_end)}</p>
       <p className="print-day-meta">{day.total_events} eventos</p>
+      {formatExemptionReason(day.exemption_reason) ? <p className="print-day-meta">Motivo: {formatExemptionReason(day.exemption_reason)}</p> : null}
       <p className={`print-day-status ${isAbsence ? "print-day-status--incident" : day.status === "late" || day.status === "left_early" ? "print-day-status--warning" : day.status === "on_time" ? "print-day-status--ok" : "print-day-status--neutral"}`}>{status.label}</p>
       {absenceEventDetail ? <p className="print-incident text-[9px]">{absenceEventDetail}</p> : null}
       {day.has_mixed_schedule ? <p className="print-day-meta">Horario mixto</p> : null}

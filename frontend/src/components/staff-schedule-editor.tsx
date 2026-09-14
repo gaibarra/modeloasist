@@ -54,7 +54,7 @@ export function StaffScheduleEditor({ employeeId, employeeName, departmentId }: 
   };
 
   return <>
-    <button type="button" className="rounded-full border border-amber-500 bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-sm transition hover:bg-amber-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2" onClick={() => setOpen(true)}>Gestionar horario</button>
+    <button type="button" className="min-h-11 rounded-full border border-amber-500 bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-sm transition hover:bg-amber-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2" onClick={() => setOpen(true)}>Gestionar horario</button>
     {open && <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/30 px-3 py-6 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-label="Gestionar horario">
       <div className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-white bg-white shadow-2xl">
         <header className="flex items-start justify-between border-b border-border px-5 py-4"><div><p className="section-eyebrow">Horario semestral</p><h2 className="text-xl font-semibold text-(--color-brand-strong)">{employeeName}</h2><p className="text-sm text-(--muted)">Define uno o varios bloques por día.</p></div><button className="secondary-button rounded-full p-2" onClick={() => setOpen(false)} aria-label="Cerrar"><X className="h-4 w-4" /></button></header>

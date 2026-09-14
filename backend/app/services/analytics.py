@@ -45,6 +45,7 @@ DAY_TO_INDEX = {
 }
 LATE_TOLERANCE_MINUTES = 10
 SCHEDULE_CONSECUTIVE_GAP_MINUTES = 10
+CALCULATED_ABSENCE_GRACE_DAYS = 7
 
 _ANALYTICS_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
 _CACHE_TTLS = {
@@ -946,6 +947,7 @@ class AnalyticsService:
                 total_events=total_events,
                 scheduled_start=scheduled_start,
                 scheduled_end=scheduled_end,
+                target_date=target_date,
                 exempt_entry=bool(exemption and exemption.exempt_entry),
                 exempt_exit=bool(exemption and exemption.exempt_exit),
             )
@@ -1071,6 +1073,7 @@ class AnalyticsService:
                     total_events=total_events,
                     scheduled_start=scheduled_start,
                     scheduled_end=scheduled_end,
+                    target_date=current_date,
                     exempt_entry=bool(exemption and exemption.exempt_entry),
                     exempt_exit=bool(exemption and exemption.exempt_exit),
                 )
@@ -1542,6 +1545,7 @@ def _staff_daily_status(
     total_events: int,
     scheduled_start: time | None,
     scheduled_end: time | None,
+    target_date: date,
     exempt_entry: bool = False,
     exempt_exit: bool = False,
 ) -> str:
@@ -1552,6 +1556,10 @@ def _staff_daily_status(
     if exempt_exit:
         return "exit_excused"
     if first_event is None:
+        # Wait for delayed attendance batches before calculating an absence
+        # from the complete lack of marks. A single mark remains actionable.
+        if scheduled_start is not None and (date.today() - target_date).days > CALCULATED_ABSENCE_GRACE_DAYS:
+            return "absence"
         return "no_events"
     if total_events == 1:
         return "absence"
