@@ -665,6 +665,13 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                 >
                   Consultar
                 </button>
+                <button
+                  type="submit"
+                  formAction="/staff/hours"
+                  className="ghost-button min-h-12 px-5 py-3 text-sm xl:col-span-2"
+                >
+                  Reporte de horas semanal
+                </button>
               </form>
               <div className="mt-4 hidden items-center justify-between gap-3 lg:flex">
                 <PeriodFilterNavigation currentParams={params} activeFilter={activePeriodFilter} />

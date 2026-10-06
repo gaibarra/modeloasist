@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Escuela Modelo · Guía visual</title><link rel="stylesheet" href="escuela-modelo.css"></head>
+<body><main class="page-shell"><div class="page-container">
+<header class="brand-panel em-panel em-stack">
+ <div class="em-logo"><img class="em-logo-image" src="Modelo.jpg" width="64" height="64" alt="Logo de Escuela Modelo"><div><p class="em-wordmark">Escuela Modelo</p><p class="em-app-name">Nombre de la aplicación</p></div></div>
+ <div><span class="brand-badge">Portal institucional</span></div>
+ <h1 class="page-title">Servicios escolares</h1>
+ <p class="page-subtitle">Ejemplo visual. Los datos son ilustrativos y los controles no guardan información.</p>
+ <nav class="em-actions" aria-label="Secciones"><a class="primary-button" href="#formulario">Nueva solicitud</a><a class="secondary-button" href="#estados">Ver estados</a></nav>
+</header>
+<section class="em-grid" aria-label="Indicadores ilustrativos">
+ <div class="surface-card em-kpi"><p class="em-kpi-label">Solicitudes</p><p class="em-kpi-value">128</p><p class="helper-text">Periodo actual</p></div>
+ <div class="surface-card em-kpi"><p class="em-kpi-label">Completadas</p><p class="em-kpi-value">96</p><span class="status-pill status-success">Completado</span></div>
+ <div class="surface-card em-kpi"><p class="em-kpi-label">Pendientes</p><p class="em-kpi-value">32</p><span class="status-pill status-warning">En revisión</span></div>
+</section>
+<section class="surface-card em-panel em-stack" id="formulario">
+ <p class="section-eyebrow">Formulario</p><h2 class="em-section-title">Datos de la solicitud</h2>
+ <div><label class="field-label" for="nombre">Nombre completo</label><input class="field-input" id="nombre" autocomplete="name" placeholder="Escribe tu nombre" aria-describedby="ayuda"><p class="helper-text" id="ayuda">Utiliza tu nombre registrado en Escuela Modelo.</p></div>
+ <div><label class="field-label" for="servicio">Servicio</label><select class="field-input" id="servicio"><option>Constancia de estudios</option><option>Información escolar</option></select></div>
+ <div class="em-actions"><button class="primary-button" type="button" disabled>Guardar (demostración)</button><button class="secondary-button" type="button">Secundario</button><button class="security-button" type="button">Seguridad</button><button class="ghost-button" type="button">Acción discreta</button></div>
+</section>
+<section class="surface-card em-panel em-stack" id="estados">
+ <h2 class="em-section-title">Estados y avisos</h2>
+ <div class="em-actions"><span class="status-pill status-success">Completado</span><span class="status-pill status-warning">Pendiente</span><span class="status-pill status-danger">Requiere atención</span><span class="status-pill status-neutral">Sin registro</span></div>
+ <p class="alert-info">Información sobre el servicio.</p><p class="alert-success">Solicitud registrada correctamente.</p><p class="alert-warning">Revisa los datos antes de continuar.</p><p class="alert-error">No se pudo completar la operación.</p>
+ <div class="surface-muted em-panel"><p class="helper-text">Superficie secundaria para filtros o información de apoyo.</p></div>
+</section>
+</div></main></body></html>

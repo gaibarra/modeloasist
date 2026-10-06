@@ -601,14 +601,40 @@ class AttendanceImportService:
             for employee in existing_employees
         }
         employees_by_name: dict[str, list[Employee]] = {}
+        employees_by_external_id: dict[int, list[Employee]] = {}
+        repeated_names: dict[tuple[str, str], list[Employee]] = {}
         for employee in existing_employees:
             employees_by_name.setdefault(self._normalize_value(employee.nombre), []).append(employee)
+            if employee.external_employee_id is not None:
+                employees_by_external_id.setdefault(employee.external_employee_id, []).append(employee)
+            tokens = self._normalize_header(employee.nombre).split()
+            department = self._employee_identity_key_for_values(employee.nombre, employee.departamento)[1]
+            for length in range(1, len(tokens)):
+                repeated = " ".join(tokens + tokens[:length])
+                repeated_names.setdefault((repeated, department), []).append(employee)
         existing_ids = {employee.id for employee in existing_employees}
 
         for row in rows:
+            # The biometric ID and the application's primary key are separate
+            # catalogs. A known external ID must win over a coinciding local ID.
+            external_matches = employees_by_external_id.get(row.employee_id, [])
+            if len(external_matches) > 1:
+                raise HTTPException(status_code=422, detail=f"ID biométrico ambiguo en fila {row.row_number}; revisa el catálogo.")
+            if external_matches:
+                row.employee_id = external_matches[0].id
+                row.lookup_reason = None
+                continue
             matched_id = existing_matches.get(self._employee_identity_key(row))
             if matched_id is not None:
                 row.employee_id = matched_id
+                row.lookup_reason = None
+                continue
+
+            repeated_matches = repeated_names.get((self._normalize_header(row.nombre), self._employee_identity_key(row)[1]), [])
+            if len(repeated_matches) > 1:
+                raise HTTPException(status_code=422, detail=f"Nombre con apellidos repetidos ambiguo en fila {row.row_number}; revisa el catálogo.")
+            if repeated_matches:
+                row.employee_id = repeated_matches[0].id
                 row.lookup_reason = None
                 continue
 

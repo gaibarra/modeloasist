@@ -69,6 +69,7 @@ from app.services.attendance_import import AttendanceImportService
 from app.services.analytics import AnalyticsService, REPORT_YEAR, REPORT_YEAR_END, REPORT_YEAR_START
 from app.services.staff_schedule_bulk import BulkInstructionError, parse_bulk_instruction
 from app.services.official_holidays import official_holiday_name
+from app.services.weekly_hours import summarize_weekly_hours
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -748,6 +749,30 @@ def get_staff_daily_attendance(
         )
         for row in period_rows
     ]
+
+
+@router.get("/weekly-hours")
+def get_staff_weekly_hours(
+    department_id: int,
+    start_date: date,
+    end_date: date,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    analytics: AnalyticsService = Depends(get_analytics_service),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_staff_department_access(actor=actor, department_id=department_id)
+    _resolve_week_period(start_date=start_date, end_date=end_date)
+    if (end_date - start_date).days != 6:
+        raise HTTPException(status_code=400, detail="Selecciona una sola semana completa, de lunes a domingo.")
+    rows = get_staff_daily_attendance(department_id, start_date, end_date, actor, analytics, db)
+    department = db.get(Department, department_id)
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "department_name": department.name if department else "Departamento",
+        "campus": department.campus if department else None,
+        "rows": summarize_weekly_hours(rows),
+    }
 
 
 @router.get("/mobile/employees", response_model=list[StaffDepartmentEmployeeSummary])

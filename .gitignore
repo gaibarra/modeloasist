@@ -28,3 +28,7 @@ dist/
 
 # Misc
 *.log
+
+# Attendance reconciliation reports contain personal information.
+/reportes/
+/Horarios2doSemestre2026.xlsx

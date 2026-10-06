@@ -15,8 +15,10 @@ from app.models.staff_schedule_override import (
 )
 from app.models.staff_holiday_work import StaffHolidayWorkAssignment
 from app.models.staff_attendance_exemption import StaffAttendanceExemption
+from app.models.staff_schedule_file_import import StaffScheduleFileImport
 
 __all__ = [
+	"StaffScheduleFileImport",
 	"AttendanceEvent",
 	"AttendanceImportBatch",
 	"AttendanceWeeklyMetric",

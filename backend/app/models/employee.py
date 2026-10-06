@@ -9,6 +9,7 @@ class Employee(Base):
     __tablename__ = "employees"
 
     id = Column(BigInteger, primary_key=True, index=True)
+    external_employee_id = Column(BigInteger, nullable=True)
     nombre = Column(Text, nullable=False)
     departamento = Column(Text, nullable=False)
     campus = Column(Text, nullable=True, index=True)
