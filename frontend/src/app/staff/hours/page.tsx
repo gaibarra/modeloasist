@@ -12,6 +12,9 @@ type Day = {
 };
 type Row = {
   employee_id: number; employee_name: string; contracted_seconds: number;
+  labor_contract_seconds: number | null; scheduled_seconds: number;
+  scheduled_contract_difference_seconds: number | null;
+  worked_scheduled_difference_seconds: number;
   worked_seconds: number; difference_seconds: number; justified_days: number;
   incomplete_days: number; unmeasured_days: number; days: Day[];
 };
@@ -49,6 +52,8 @@ export default async function WeeklyHoursPage({ searchParams }: { searchParams: 
   const query = new URLSearchParams({ department_id: params.department_id!, start_date: start, end_date: end });
   const report = await fetchBackendJson<Report>(`/staff/weekly-hours?${query}`);
   const contracted = report.rows.reduce((sum, row) => sum + row.contracted_seconds, 0);
+  const completeContracts = report.rows.every(row => row.labor_contract_seconds != null);
+  const laborTotal = report.rows.reduce((sum, row) => sum + (row.labor_contract_seconds ?? 0), 0);
   const worked = report.rows.reduce((sum, row) => sum + row.worked_seconds, 0);
   const unmeasured = report.rows.reduce((sum, row) => sum + row.unmeasured_days, 0);
   return <main className={styles.report}>
@@ -56,26 +61,29 @@ export default async function WeeklyHoursPage({ searchParams }: { searchParams: 
     <header className={styles.header}><p>ESCUELA MODELO · ASISTENCIA INSTITUCIONAL</p><h1>Reporte de horas semanal</h1><h2>{report.campus ? `${report.campus} · ` : ""}{report.department_name}</h2><p>{dateLabel(start)} — {dateLabel(end)}</p><small>Emitido por {user.full_name} · {new Date().toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}</small></header>
     <section className={styles.metrics} aria-label="Resumen semanal">
       <div>Colaboradores<strong>{report.rows.length}</strong></div>
-      <div>Horas contratadas<strong>{duration(contracted)}</strong></div>
+      <div>Contrato laboral<strong>{completeContracts ? duration(laborTotal) : "Sin referencia completa"}</strong></div>
+      <div>Horas programadas<strong>{duration(contracted)}</strong></div>
       <div>Horas trabajadas estimadas<strong>{duration(worked)}</strong></div>
-      <div>Diferencia registrada<strong>{duration(worked - contracted)}</strong></div>
+      <div>Programadas − contrato<strong>{completeContracts ? duration(contracted - laborTotal) : "—"}</strong></div>
+      <div>Trabajadas − programadas<strong>{duration(worked - contracted)}</strong></div>
     </section>
     <aside className={styles.note}>
       <strong>Lectura del reporte · horas:minutos</strong>
-      <p>Contratadas: suma de los bloques del horario aplicable a cada fecha, incluidas sus excepciones. Los descansos oficiales sin turno autorizado aportan 0 horas.</p>
+      <p>Contrato laboral: horas semanales registradas con vigencia que cubra toda la semana. Si no existe o la semana cruza una frontera de vigencia, se indica sin referencia contractual completa; no se prorratea.</p>
+      <p>Programadas: suma de los bloques del horario aplicable a cada fecha, incluidas sus excepciones. Los descansos oficiales sin turno autorizado aportan 0 horas. Esta cifra puede diferir del horario semestral usado para conciliar el contrato.</p>
       <p>Trabajadas estimadas: tiempo entre primera y última checada distinta, descontando las pausas entre bloques del horario. No comprueba permanencia continua. Con cero o una checada no se calcula tiempo; “—” no significa una falta.</p>
       <p>Las exenciones, incluido home office, se indican sin convertirlas en horas biométricas. La diferencia es informativa: no determina descuentos ni horas extra. Incluye toda la plantilla, sin filtros de incidencias o búsqueda.</p>
       {unmeasured > 0 && <p><strong>Datos parciales:</strong> {unmeasured} días con horario carecen de marcas suficientes para calcular horas. Los totales solo suman tiempo calculable; pueden cambiar al cargar nuevos lotes.</p>}
     </aside>
     <h2>Resumen por colaborador</h2>
-    <div className={styles.tableWrap}><table><thead><tr><th>Colaborador</th><th>Contratadas</th><th>Trabajadas estimadas</th><th>Diferencia</th><th>Días justificados</th><th>Días sin tiempo calculable*</th></tr></thead><tbody>
-      {report.rows.map(row => <tr key={row.employee_id}><th scope="row">{row.employee_name}</th><td>{duration(row.contracted_seconds)}</td><td>{duration(row.worked_seconds)}</td><td>{duration(row.difference_seconds)}</td><td>{row.justified_days}</td><td>{row.unmeasured_days}</td></tr>)}
-      {report.rows.length === 0 && <tr><td colSpan={6}>No hay colaboradores asignados a este departamento.</td></tr>}
-    </tbody><tfoot><tr><th>Total</th><td>{duration(contracted)}</td><td>{duration(worked)}</td><td>{duration(worked - contracted)}</td><td>{report.rows.reduce((sum, row) => sum + row.justified_days, 0)}</td><td>{unmeasured}</td></tr></tfoot></table></div>
-    <p className={styles.caption}>* Días con horas contratadas y sin tiempo calculable. Pueden estar justificados; no equivalen a faltas.</p>
+    <div className={styles.tableWrap}><table><thead><tr><th>Colaborador</th><th>Contrato laboral</th><th>Programadas</th><th>Trabajadas estimadas</th><th>Programadas − contrato</th><th>Trabajadas − programadas</th><th>Días justificados</th><th>Días sin tiempo calculable*</th></tr></thead><tbody>
+      {report.rows.map(row => <tr key={row.employee_id}><th scope="row">{row.employee_name}</th><td>{row.labor_contract_seconds == null ? "Sin referencia contractual completa" : duration(row.labor_contract_seconds)}</td><td>{duration(row.contracted_seconds)}</td><td>{duration(row.worked_seconds)}</td><td>{row.scheduled_contract_difference_seconds == null ? "—" : duration(row.scheduled_contract_difference_seconds)}</td><td>{duration(row.difference_seconds)}</td><td>{row.justified_days}</td><td>{row.unmeasured_days}</td></tr>)}
+      {report.rows.length === 0 && <tr><td colSpan={8}>No hay colaboradores asignados a este departamento.</td></tr>}
+    </tbody><tfoot><tr><th>Total</th><td>{completeContracts ? duration(laborTotal) : "—"}</td><td>{duration(contracted)}</td><td>{duration(worked)}</td><td>{completeContracts ? duration(contracted - laborTotal) : "—"}</td><td>{duration(worked - contracted)}</td><td>{report.rows.reduce((sum, row) => sum + row.justified_days, 0)}</td><td>{unmeasured}</td></tr></tfoot></table></div>
+    <p className={styles.caption}>* Días con horas programadas y sin tiempo calculable. Pueden estar justificados; no equivalen a faltas.</p>
     {report.rows.map(row => <section key={row.employee_id} className={styles.detail}>
       <h2>{row.employee_name}</h2>
-      <div className={styles.tableWrap}><table><thead><tr><th>Día</th><th>Horario aplicable</th><th>Primera / última checada</th><th>Contratadas</th><th>Trabajadas estimadas</th><th>Observaciones</th></tr></thead><tbody>{row.days.map(day => <tr key={day.date}>
+      <div className={styles.tableWrap}><table><thead><tr><th>Día</th><th>Horario aplicable</th><th>Primera / última checada</th><th>Programadas</th><th>Trabajadas estimadas</th><th>Observaciones</th></tr></thead><tbody>{row.days.map(day => <tr key={day.date}>
         <th scope="row">{new Date(`${day.date}T12:00:00Z`).toLocaleDateString("es-MX", { timeZone: "UTC", weekday: "short", day: "2-digit", month: "short" }).toUpperCase()}</th>
         <td>{day.official_holiday ? "Descanso oficial" : day.schedule.map(block => `${block.start.slice(0, 5)}–${block.end.slice(0, 5)}`).join(" / ") || "Sin horario"}</td>
         <td>{day.first_event?.slice(0, 5) ?? "—"} / {day.total_events > 1 ? day.last_event?.slice(0, 5) : "—"}</td>

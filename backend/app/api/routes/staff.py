@@ -70,6 +70,7 @@ from app.services.analytics import AnalyticsService, REPORT_YEAR, REPORT_YEAR_EN
 from app.services.staff_schedule_bulk import BulkInstructionError, parse_bulk_instruction
 from app.services.official_holidays import official_holiday_name
 from app.services.weekly_hours import summarize_weekly_hours
+from app.services.labor_contracts import reconciliation, enrich_weekly, LABELS as CONTRACT_LABELS
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -771,8 +772,53 @@ def get_staff_weekly_hours(
         "end_date": end_date,
         "department_name": department.name if department else "Departamento",
         "campus": department.campus if department else None,
-        "rows": summarize_weekly_hours(rows),
+        "rows": enrich_weekly(db, summarize_weekly_hours(rows), start_date, end_date),
     }
+
+
+@router.get("/labor-contracts")
+def get_labor_contracts(
+    department_id: int | None = None,
+    employee_id: int | None = None,
+    campus: str | None = None,
+    contract_status: str | None = None,
+    academic_year: int = 2026,
+    semester: int = 2,
+    export: bool = False,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    db: Session = Depends(get_db),
+):
+    _validate_semester(academic_year, semester)
+    if contract_status and contract_status not in CONTRACT_LABELS and contract_status != "not_in_file":
+        raise HTTPException(status_code=400, detail="Estado de conciliación inválido")
+    if department_id is not None:
+        _require_staff_department_access(actor=actor, department_id=department_id)
+        ids = [department_id]
+    else:
+        ids = list(db.scalars(select(Department.id))) if actor.is_superadmin else list(actor.department_ids or [])
+    if employee_id is not None:
+        if department_id is None:
+            raise HTTPException(status_code=400, detail="Indica el departamento del colaborador")
+        _require_employee_in_department(db, employee_id, department_id, actor)
+    result = reconciliation(db, ids, academic_year, semester, employee_id)
+    result["rows"] = [r for r in result["rows"] if (not campus or r["campus"] == campus) and
+                      (not contract_status or r["status"] == contract_status or
+                       (contract_status == "not_in_file" and r["source_presence"] == "Sin información en este archivo"))]
+    if not export:
+        return result
+    import csv
+    import io
+    from fastapi.responses import Response
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Colaborador", "Campus", "Departamento", "Contrato (minutos)", "Horario semestral (minutos)", "Diferencia (minutos)", "Estado", "Archivo"])
+    def safe(value):
+        if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+            return "'" + value
+        return value
+    for row in result["rows"]:
+        writer.writerow([safe(row[k]) for k in ("employee_name", "campus", "department_name", "contract_minutes", "scheduled_minutes", "difference_minutes", "status_label", "source_presence")])
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="contratos-horarios.csv"', "Cache-Control": "no-store"})
 
 
 @router.get("/mobile/employees", response_model=list[StaffDepartmentEmployeeSummary])
