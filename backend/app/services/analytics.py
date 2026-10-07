@@ -987,9 +987,12 @@ class AnalyticsService:
         *,
         period_start: date,
         period_end: date,
-        department_id: int,
+        department_id: int | None = None,
         employee_ids: Sequence[int] | None = None,
+        campus: str | None = None,
     ) -> list[StaffPeriodAttendanceRow]:
+        if (department_id is None) == (campus is None):
+            raise ValueError("Indica un departamento o un campus, no ambos")
         employee_stmt = (
             select(
                 Employee.id.label("employee_id"),
@@ -1002,9 +1005,12 @@ class AnalyticsService:
             )
             .join(EmployeeDepartment, EmployeeDepartment.employee_id == Employee.id)
             .join(Department, Department.id == EmployeeDepartment.department_id)
-            .where(EmployeeDepartment.department_id == department_id)
-            .order_by(Employee.nombre.asc())
+            .order_by(Employee.nombre.asc(), Department.name.asc())
         )
+        if campus is not None:
+            employee_stmt = employee_stmt.where(Department.campus == campus, Department.active.is_(True))
+        else:
+            employee_stmt = employee_stmt.where(EmployeeDepartment.department_id == department_id)
         if employee_ids is not None:
             normalized_ids = [employee_id for employee_id in employee_ids if employee_id > 0]
             if not normalized_ids:
@@ -1012,6 +1018,12 @@ class AnalyticsService:
             employee_stmt = employee_stmt.where(Employee.id.in_(normalized_ids))
 
         employee_rows = self._db.execute(employee_stmt).all()
+        if campus is not None:
+            # Hours belong to the person, not to each of their departments.
+            unique_rows = {}
+            for row in employee_rows:
+                unique_rows.setdefault(row.employee_id, row)
+            employee_rows = list(unique_rows.values())
         if not employee_rows:
             return []
 

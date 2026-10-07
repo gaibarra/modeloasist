@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -71,6 +71,7 @@ from app.services.staff_schedule_bulk import BulkInstructionError, parse_bulk_in
 from app.services.official_holidays import official_holiday_name
 from app.services.weekly_hours import summarize_weekly_hours
 from app.services.labor_contracts import reconciliation, enrich_weekly, LABELS as CONTRACT_LABELS
+from app.services.campus_hours import RECTOR_REPORT_EMAILS, REPORT_CAMPUSES, campus_report, report_csv
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -774,6 +775,32 @@ def get_staff_weekly_hours(
         "campus": department.campus if department else None,
         "rows": enrich_weekly(db, summarize_weekly_hours(rows), start_date, end_date),
     }
+
+
+@router.get("/campus-hours")
+def get_campus_hours(
+    response: Response,
+    campus: str,
+    start_date: date,
+    end_date: date,
+    export: bool = False,
+    actor: AuthenticatedActor = Depends(require_staff_actor),
+    analytics: AnalyticsService = Depends(get_analytics_service),
+    db: Session = Depends(get_db),
+):
+    # Explicit privilege for this read-only report only, not a change to staff scopes.
+    if not actor.staff or not actor.staff.is_active or actor.staff.email.strip().lower() not in RECTOR_REPORT_EMAILS:
+        raise HTTPException(status_code=403, detail="No tienes acceso al reporte ejecutivo por campus")
+    if campus not in REPORT_CAMPUSES:
+        raise HTTPException(status_code=400, detail="Selecciona un campus válido")
+    _resolve_week_period(start_date=start_date, end_date=end_date)
+    if (end_date - start_date).days != 6:
+        raise HTTPException(status_code=400, detail="Selecciona una sola semana completa, de lunes a domingo")
+    report = campus_report(db, analytics, campus, start_date, end_date)
+    if export:
+        return Response(report_csv(report), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="reporte-ejecutivo-campus.csv"', "Cache-Control": "private, no-store"})
+    response.headers["Cache-Control"] = "private, no-store"
+    return report
 
 
 @router.get("/labor-contracts")

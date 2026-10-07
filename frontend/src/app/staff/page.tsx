@@ -22,6 +22,7 @@ import {
   StaffScheduleInterval,
 } from "@/lib/auth";
 import { fetchBackendJson, requireStaffUser } from "@/lib/server-session";
+import { canViewCampusHours } from "@/lib/campus-hours";
 
 type StaffSearchParams = {
   view?: string;
@@ -673,6 +674,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                   Reporte de horas semanal
                 </button>
                 <Link href={`/staff/contracts?department_id=${selectedDepartmentId}`} className="ghost-button min-h-12 px-5 py-3 text-sm xl:col-span-2">Contratos y horarios pendientes</Link>
+                {canViewCampusHours(user.email) && <button type="submit" formAction="/staff/campus-hours" className="primary-button min-h-12 px-5 py-3 text-sm xl:col-span-2">Reporte ejecutivo por campus</button>}
               </form>
               <div className="mt-4 hidden items-center justify-between gap-3 lg:flex">
                 <PeriodFilterNavigation currentParams={params} activeFilter={activePeriodFilter} />
