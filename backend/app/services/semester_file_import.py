@@ -27,6 +27,11 @@ def normalized(value):
     return " ".join("".join(c for c in unicodedata.normalize("NFKD", str(value).upper()) if not unicodedata.combining(c)).split())
 
 
+def compact_name(value):
+    """Compare spelling independent of spaces/hyphens, never source IDs alone."""
+    return "".join(c for c in normalized(value) if c.isalnum())
+
+
 def parse_time(value):
     if isinstance(value, time):
         if value.second or value.microsecond:
@@ -63,13 +68,14 @@ def read_workbook(path):
         if tuple(next(rows))[:10] != ("empleadoId", "empleadoNombre", "escClave", "progClave", "matClave", "matNombre", "gpoClave", "diaLetra", "Inicio", "Fin"):
             raise ValueError(f"Encabezado inesperado en {sheet}")
         for number, row in enumerate(rows, 2):
-            if not any(v is not None for v in row):
+            # Extra columns contain helper formulas, not additional staff records.
+            if not any(v is not None for v in row[:10]):
                 continue
             key = (sheet, str(row[0]))
             person = groups.setdefault(key, {"sheet": sheet, "campus": campus, "source_id": str(row[0]), "name": str(row[1] or ""), "rows": [], "blocks": defaultdict(list), "errors": []})
             person["rows"].append(number)
             try:
-                if not row[1] or normalized(row[1]) != normalized(person["name"]):
+                if not row[1] or compact_name(row[1]) != compact_name(person["name"]):
                     raise ValueError("ID de origen con nombres inconsistentes")
                 weekday = [normalized(d) for d in DAYS].index(normalized(row[7]))
                 start, end = parse_time(row[8]), parse_time(row[9])

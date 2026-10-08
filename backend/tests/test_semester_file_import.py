@@ -4,6 +4,31 @@ import pytest
 from app.services.semester_file_import import merge_blocks, normalized, parse_time, reconcile
 
 
+def test_workbook_auxiliary_rows_and_spacing_variants(tmp_path):
+    from openpyxl import Workbook
+    from app.services.semester_file_import import read_workbook
+    book = Workbook()
+    book.remove(book.active)
+    headers = ['empleadoId', 'empleadoNombre', 'escClave', 'progClave', 'matClave',
+               'matNombre', 'gpoClave', 'diaLetra', 'Inicio', 'Fin']
+    for title in ('CME', 'CVA', 'CCH'):
+        ws = book.create_sheet(title)
+        ws.append(headers)
+    ws = book['CME']
+    ws.append([1, 'HERNANDEZDOMINGUEZANDRES JESUS', '', '', '', '', '', 'Lunes', '07:00', '08:00'])
+    ws.append([1, 'HERNÁNDEZ DOMINGUEZ ANDRES JESUS', '', '', '', '', '', 'Lunes', '08:00', '09:00'])
+    ws.append([None] * 10 + [4, 12])
+    ws.append([2, 'OTRA PERSONA', '', '', '', '', '', 'Martes', '07:00', '08:00'])
+    ws.append([2, 'PERSONA DISTINTA', '', '', '', '', '', 'Martes', '08:00', '09:00'])
+    path = tmp_path / 'workbook.xlsx'
+    book.save(path)
+    people = read_workbook(path)
+    assert len(people) == 2
+    assert not people[0]['errors']
+    assert people[0]['intervals'] == [{'weekday': 0, 'start': '07:00', 'end': '09:00'}]
+    assert people[1]['errors']  # Different names sharing an ID still block import.
+
+
 def test_merge_only_overlapping_or_touching_intervals():
     assert merge_blocks([(420, 480), (420, 480), (450, 540), (540, 600), (660, 720)]) == [[420, 600], [660, 720]]
 

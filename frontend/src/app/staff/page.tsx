@@ -576,7 +576,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
             </>
           }
           compact
-          actions={<><ChangePasswordLink />{user.is_superadmin ? <Link href="/staff/admin" className="secondary-button">Gestionar staff</Link> : null}<LogoutButton /></>}
+          actions={<>{user.email.trim().toLowerCase() === "gaibarra@hotmail.com" ? <Link href="/colaboradores" className="secondary-button">Gestionar colaboradores</Link> : null}<ChangePasswordLink />{user.is_superadmin ? <Link href="/staff/admin" className="secondary-button">Gestionar staff</Link> : null}<LogoutButton /></>}
         />
 
         <div className="flex justify-center">

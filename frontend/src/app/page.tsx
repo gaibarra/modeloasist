@@ -90,7 +90,7 @@ const formatTrend = (lateEvents: number | undefined) =>
   lateEvents ? `${lateEvents} llegadas fuera de tolerancia` : "Sin retrasos";
 
 export default async function Home() {
-  await requireAdminUser();
+  const user = await requireAdminUser();
   const dashboard = await fetchDashboard();
   const { global_metrics: globalMetrics, campus_metrics: campusMetrics, top_employees: topEmployees, timeline } =
     dashboard;
@@ -172,7 +172,7 @@ export default async function Home() {
           eyebrow="Mejora continua"
           title="Tablero de puntualidad"
           description="Datos reales de Escuela Modelo para Mérida, Montejo, Chetumal y Valladolid, con una vista sobria y clara para dar seguimiento institucional." 
-          actions={<><ChangePasswordLink /><Link href="/staff/admin" className="secondary-button">Gestionar staff</Link><LogoutButton /></>}
+          actions={<>{user.email.trim().toLowerCase() === "gaibarra@hotmail.com" ? <Link href="/colaboradores" className="secondary-button">Gestionar colaboradores</Link> : null}<ChangePasswordLink /><Link href="/staff/admin" className="secondary-button">Gestionar staff</Link><LogoutButton /></>}
         />
         <section className="surface-card p-6 sm:p-8">
           <div className="mt-6 -mx-1 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-3 pl-1 pr-2 md:mx-0 md:grid md:grid-cols-3 md:gap-4 md:overflow-visible md:pb-0 md:pl-0 md:pr-0 md:snap-none">
