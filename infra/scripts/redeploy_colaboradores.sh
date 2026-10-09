@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish owner-only collaborator CRUD: pinned commit 25f5cb0.
+# Publish owner-only collaborator CRUD: justified scheduled hours: pinned commit 049fa5e.
 # No database migrations or data imports; production services change only with --deploy.
 # Run with sudo bash ... --check, then sudo bash ... --deploy.
 set -Eeuo pipefail
@@ -16,8 +16,8 @@ PYTHON=$REPO/backend/.venv/bin/python
 BACK_ENV=/etc/asistenciamodelo/backend.env
 FRONT_ENV=/etc/asistenciamodelo/frontend.env
 # Sort after previous release overrides; retain them for rollback.
-BACK_DROP=/etc/systemd/system/$BACKEND.d/zzzz-release-colaboradores.conf
-FRONT_DROP=/etc/systemd/system/$FRONTEND.d/zzzz-release-colaboradores.conf
+BACK_DROP=/etc/systemd/system/$BACKEND.d/zzzzz-release-049fa5e.conf
+FRONT_DROP=/etc/systemd/system/$FRONTEND.d/zzzzz-release-049fa5e.conf
 OLD_BACK=''
 OLD_FRONT=''
 PREVIOUS_ROOT=''
@@ -125,7 +125,7 @@ if [[ "$MODE" == --deploy ]]; then
   flock -n 9 || die 'Hay otro redeploy en ejecución.'
 fi
 [[ -x "$PYTHON" && -r "$BACK_ENV" && -r "$FRONT_ENV" ]] || die 'Falta Python o configuración de producción.'
-COMMIT=$(git_repo rev-parse '25f5cb0fac455373dd4d650221269642727c59db^{commit}')
+COMMIT=$(git_repo rev-parse '049fa5e511fd9d0ffda98a88f4f6fd3bdca0b004^{commit}')
 # Deploy the pinned commit even if HEAD later contains this script or documentation.
 [[ ! -e "$BACK_DROP" && ! -e "$FRONT_DROP" ]] || die 'Ya existe un override de esta publicación; no se sobrescribirá.'
 for unit in "$BACKEND" "$FRONTEND"; do
@@ -162,8 +162,8 @@ if [[ "$MODE" == --check ]]; then
 fi
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-RELEASE=/opt/asistenciamodelo/releases/$STAMP-colaboradores
-BACKUP=/var/backups/asistenciamodelo/$STAMP-colaboradores
+RELEASE=/opt/asistenciamodelo/releases/$STAMP-049fa5e
+BACKUP=/var/backups/asistenciamodelo/$STAMP-049fa5e
 [[ ! -e "$RELEASE" && ! -e "$BACKUP" ]] || die 'Ya existe esta carpeta de despliegue.'
 install -d -m 0755 /opt/asistenciamodelo /opt/asistenciamodelo/releases
 install -d -m 0700 "$BACKUP"

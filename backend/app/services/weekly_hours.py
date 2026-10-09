@@ -3,7 +3,8 @@
 Biometric events have no entry/exit direction. Worked time is consequently an
 estimate between the first and last distinct marks, excluding scheduled breaks.
 Fully justified days without sufficient marks receive their effective scheduled
-hours. This credit is reported separately from the biometric estimate.
+hours. Fully justified force-majeure days also top up a short observed shift to
+the scheduled duration. Only the credited supplement is reported separately.
 """
 from app.schemas.staff import StaffMobilePeriodRow
 
@@ -37,9 +38,13 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
                 breaks = sum(max(0, min(last, right[0]) - max(first, left[1]))
                              for left, right in zip(intervals, intervals[1:]))
                 worked = max(0, last - first - breaks)
-            credited = contracted if not complete and day.exempt_entry and day.exempt_exit else 0
+            full_exemption = day.exempt_entry and day.exempt_exit
+            credit_schedule = full_exemption and (
+                not complete or day.exemption_reason == "fuerza_mayor"
+            )
+            credited = max(0, contracted - (worked or 0)) if credit_schedule else 0
             if credited:
-                worked = credited
+                worked = (worked or 0) + credited
             days.append({
                 "date": day.date,
                 "contracted_seconds": contracted,

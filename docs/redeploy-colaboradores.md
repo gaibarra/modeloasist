@@ -1,7 +1,7 @@
 # Redespliegue del CRUD de colaboradores
 
 El script `infra/scripts/redeploy_colaboradores.sh` publica exactamente el commit
-`25f5cb0fac455373dd4d650221269642727c59db` (`081026a`). Usa `git archive`:
+`049fa5e511fd9d0ffda98a88f4f6fd3bdca0b004` (`091026a`). Usa `git archive`:
 los cambios sin commit y los commits posteriores no se incorporan a la publicación.
 El script puede guardarse en un commit posterior sin cambiar la versión publicada.
 
@@ -36,10 +36,10 @@ restaura las rutas de la versión anterior. Si detecta modificaciones externas
 en esos overrides, se detiene para conservarlas y solicitar revisión manual.
 
 Al terminar imprime la ruta de un `rollback.sh` dentro de
-`/var/backups/asistenciamodelo/<fecha>-colaboradores`. Para volver manualmente:
+`/var/backups/asistenciamodelo/<fecha>-049fa5e`. Para volver manualmente:
 
 ```bash
-sudo bash /var/backups/asistenciamodelo/<fecha>-colaboradores/rollback.sh
+sudo bash /var/backups/asistenciamodelo/<fecha>-049fa5e/rollback.sh
 ```
 
 La reversión restaura el código; conserva los datos, incluidas las modificaciones
@@ -55,3 +55,8 @@ al login y las rutas de API devuelven `401`.
 
 Las altas no crean credenciales de inicio de sesión. La eliminación protege
 colaboradores con historial asociado y cuentas vinculadas al acceso staff.
+
+Esta versión incluye el CRUD y la acreditación de horas según el horario efectivo
+cuando están justificadas entrada y salida y faltan checadas suficientes.
+Verifica el reporte semanal, por campus y CSV; las horas acreditadas deben
+aparecer identificadas y no duplicar horas calculadas con checadas.

@@ -29,11 +29,11 @@ class DeployScriptTests(unittest.TestCase):
 
     def test_pinned_commit_and_campus_checks(self):
         source = SCRIPT.read_text()
-        self.assertIn("25f5cb0fac455373dd4d650221269642727c59db^{commit}", source)
+        self.assertIn("049fa5e511fd9d0ffda98a88f4f6fd3bdca0b004^{commit}", source)
         self.assertIn('git_repo archive "$COMMIT"', source)
         self.assertNotIn('git_repo rev-parse HEAD', source)
         self.assertIn('tests/test_campus_hours.py', source)
-        self.assertIn('zzzz-release-colaboradores.conf', source)
+        self.assertIn('zzzzz-release-049fa5e.conf', source)
         self.assertIn('/opt/asistenciamodelo/releases/*', source)
         self.assertIn('tests/test_employee_management.py tests/test_auth.py', source)
         self.assertIn('13101/colaboradores 307', source)

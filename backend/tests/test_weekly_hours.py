@@ -154,3 +154,30 @@ def test_full_justification_needs_effective_working_schedule():
                     exempt_entry=True, exempt_exit=True, is_official_holiday=True,
                     holiday_work_authorized=True)
     assert row["worked_seconds"] == row["credited_seconds"] == 8 * 3600
+
+
+@pytest.mark.parametrize("reason,expected,credited", [
+    ("fuerza_mayor", 8 * 3600, 5 * 3600 + 11 * 60),
+    ("home_office", 2 * 3600 + 49 * 60, 0),
+])
+def test_short_emergency_visit_on_force_majeure_day(reason, expected, credited):
+    row = summarize(first_event=time(9, 35), last_event=time(12, 24),
+                    exempt_entry=True, exempt_exit=True, exemption_reason=reason)
+    assert row["worked_seconds"] == expected
+    assert row["credited_seconds"] == credited
+    assert row["days"][0]["first_event"] == time(9, 35)
+    assert row["days"][0]["last_event"] == time(12, 24)
+
+
+def test_force_majeure_does_not_duplicate_or_reduce_long_observed_shift():
+    row = summarize(first_event=time(7), last_event=time(16),
+                    exempt_entry=True, exempt_exit=True, exemption_reason="fuerza_mayor")
+    assert row["worked_seconds"] == 9 * 3600
+    assert row["credited_seconds"] == 0
+
+
+def test_partial_force_majeure_does_not_credit_full_day():
+    row = summarize(first_event=time(9, 35), last_event=time(12, 24),
+                    exempt_entry=True, exemption_reason="fuerza_mayor")
+    assert row["worked_seconds"] == 2 * 3600 + 49 * 60
+    assert row["credited_seconds"] == 0
