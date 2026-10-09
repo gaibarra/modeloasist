@@ -58,8 +58,8 @@ export default async function CampusHoursPage({ searchParams }: { searchParams: 
       <aside className={`${styles.note} mt-5`}>
         <strong>Alcance y lectura</strong>
         <p>Incluye todos los colaboradores asignados a departamentos activos del campus, aun sin checadas. No se divide la lista por departamento ni se presenta detalle diario. Las horas son por persona; no representan una distribución de tiempo entre sedes.</p>
-        <p>Contrato laboral: referencia semanal vigente durante toda la semana. Programadas: horario efectivo, incluidas excepciones y descansos oficiales. Trabajadas estimadas: primera a última checada, descontando pausas programadas; con marcas insuficientes no se inventan horas.</p>
-        <p>Las justificaciones no se convierten en horas biométricas. Cero horas registradas o una diferencia negativa no equivalen automáticamente a faltas ni descuentos. Los lotes pendientes pueden cambiar los resultados.</p>
+        <p>Contrato laboral: referencia semanal vigente durante toda la semana. Programadas: horario efectivo, incluidas excepciones y descansos oficiales. Trabajadas estimadas: primera a última checada, descontando pausas programadas; con marcas insuficientes y justificación de entrada y salida se acreditan las horas del horario efectivo del día.</p>
+        <p>Las horas acreditadas se suman al total y se identifican en observaciones. Con checadas suficientes no se duplica el horario; las exenciones parciales no acreditan una jornada completa. Cero horas registradas o una diferencia negativa no equivalen automáticamente a faltas ni descuentos. Los lotes pendientes pueden cambiar los resultados.</p>
       </aside>
     </>}
   </main>;

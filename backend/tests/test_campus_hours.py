@@ -113,3 +113,40 @@ def test_three_figures_are_independent(db, monkeypatch):
     result = report["rows"][0]
     assert result["labor_contract_seconds"] == 144000
     assert result["scheduled_seconds"] == result["worked_seconds"] == 28800
+
+
+def test_justified_hours_follow_date_override_in_weekly_campus_and_csv(db, client):
+    from datetime import datetime, time
+    from app.models.staff_schedule import StaffSemesterSchedule, StaffSemesterScheduleInterval
+    from app.models.staff_schedule_override import StaffScheduleDateOverride, StaffScheduleDateOverrideInterval
+    from app.models.staff_attendance_exemption import StaffAttendanceExemption
+
+    base = StaffSemesterSchedule(employee_id=1, academic_year=2026, semester=2)
+    base.intervals = [StaffSemesterScheduleInterval(weekday=3, start=time(7), end=time(15))]
+    target = date(2026, 10, 8)
+    override = StaffScheduleDateOverride(employee_id=1, target_date=target)
+    override.intervals = [StaffScheduleDateOverrideInterval(position=0, start=time(9), end=time(12)),
+                          StaffScheduleDateOverrideInterval(position=1, start=time(13), end=time(16))]
+    exemption = StaffAttendanceExemption(employee_id=1, department_id=3, target_date=target,
+                                          exempt_entry=True, exempt_exit=True, reason="fuerza_mayor")
+    db.add_all([base, override, exemption])
+    db.commit()
+    authorize(db, "gaibarra@hotmail.com")
+    campus = client.get('/staff/campus-hours', params=QUERY).json()
+    assert campus['rows'][0]['worked_seconds'] == campus['totals']['worked_seconds'] == 6 * 3600
+    assert '6:00 h acreditadas' in campus['rows'][0]['observations']
+    csv = client.get('/staff/campus-hours', params=QUERY | {'export': True})
+    assert '6:00 h acreditadas' in csv.text
+    weekly = client.get('/staff/weekly-hours', params={'department_id': 3, 'start_date': str(START), 'end_date': str(END)})
+    assert weekly.status_code == 200
+    row = weekly.json()['rows'][0]
+    assert row['worked_seconds'] == row['credited_seconds'] == 6 * 3600
+    assert row['unmeasured_days'] == 0
+    day = next(d for d in row['days'] if d['date'] == str(target))
+    assert day['credited_seconds'] == 6 * 3600
+    assert day['total_events'] == 0 and day['first_event'] is None
+    exemption.revoked_at = datetime(2026, 10, 9, 12)
+    db.commit()
+    campus = client.get('/staff/campus-hours', params=QUERY).json()
+    assert campus['rows'][0]['worked_seconds'] == 0
+    assert 'acreditadas' not in campus['rows'][0]['observations']

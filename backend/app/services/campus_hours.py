@@ -31,6 +31,8 @@ def campus_report(db, analytics, campus, start, end):
             notes.append(f"{row['unmeasured_days']} días programados sin tiempo calculable")
         if row["incomplete_days"]:
             notes.append(f"{row['incomplete_days']} días con marcas incompletas")
+        if row["credited_seconds"]:
+            notes.append(f"{hours(row['credited_seconds'])} h acreditadas por justificación según horario")
         if row["justified_days"]:
             notes.append(f"{row['justified_days']} días justificados")
         rows.append({key: row[key] for key in (

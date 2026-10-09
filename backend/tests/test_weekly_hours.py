@@ -53,12 +53,14 @@ def test_no_fabricated_time_from_missing_or_identical_marks(events, last):
     assert row["unmeasured_days"] == 1
 
 
-def test_home_office_preserves_schedule_without_inventing_worked_hours():
+def test_home_office_credits_effective_schedule_without_marks():
     row = summarize(total_events=0, first_event=None, last_event=None,
                     exempt_entry=True, exempt_exit=True, exemption_reason="home_office")
     assert row["justified_days"] == 1
     assert row["contracted_seconds"] == 8 * 3600
-    assert row["worked_seconds"] == 0
+    assert row["worked_seconds"] == 8 * 3600
+    assert row["credited_seconds"] == 8 * 3600
+    assert row["unmeasured_days"] == 0
 
 
 def test_holiday_and_authorized_shift():
@@ -113,3 +115,42 @@ def test_api_includes_unrecorded_employees_and_effective_override_without_writes
     with TestingSessionLocal() as db:
         assert db.query(StaffSemesterScheduleInterval).one().start == time(7)
         assert db.query(StaffScheduleDateOverrideInterval).one().start == time(9)
+
+
+@pytest.mark.parametrize("events,last", [(0, None), (1, time(7)), (2, time(7))])
+def test_fully_justified_missing_marks_credit_split_shift_once(events, last):
+    blocks = [StaffScheduleInterval(start=time(7), end=time(12)),
+              StaffScheduleInterval(start=time(13), end=time(16)),
+              StaffScheduleInterval(start=time(7), end=time(12))]
+    row = summarize(total_events=events, last_event=last, schedule_intervals=blocks,
+                    exempt_entry=True, exempt_exit=True, exemption_reason="fuerza_mayor")
+    assert row["worked_seconds"] == row["contracted_seconds"] == 8 * 3600
+    assert row["difference_seconds"] == 0
+    assert row["credited_seconds"] == 8 * 3600
+    assert row["unmeasured_days"] == row["incomplete_days"] == 0
+
+
+def test_justification_with_complete_marks_does_not_double_count():
+    row = summarize(first_event=time(8), exempt_entry=True, exempt_exit=True)
+    assert row["worked_seconds"] == 7 * 3600
+    assert row["credited_seconds"] == 0
+
+
+@pytest.mark.parametrize("flags", [{"exempt_entry": True}, {"exempt_exit": True}])
+def test_partial_justification_does_not_credit_full_day(flags):
+    row = summarize(total_events=0, first_event=None, last_event=None, **flags)
+    assert row["worked_seconds"] == row["credited_seconds"] == 0
+    assert row["unmeasured_days"] == 1
+
+
+def test_full_justification_needs_effective_working_schedule():
+    row = summarize(total_events=0, first_event=None, last_event=None,
+                    exempt_entry=True, exempt_exit=True, schedule_intervals=[])
+    assert row["worked_seconds"] == row["credited_seconds"] == 0
+    row = summarize(total_events=0, first_event=None, last_event=None,
+                    exempt_entry=True, exempt_exit=True, is_official_holiday=True)
+    assert row["worked_seconds"] == row["credited_seconds"] == 0
+    row = summarize(total_events=0, first_event=None, last_event=None,
+                    exempt_entry=True, exempt_exit=True, is_official_holiday=True,
+                    holiday_work_authorized=True)
+    assert row["worked_seconds"] == row["credited_seconds"] == 8 * 3600

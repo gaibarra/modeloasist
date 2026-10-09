@@ -5,7 +5,7 @@ import styles from "./report.module.css";
 
 type Day = {
   date: string; contracted_seconds: number; worked_seconds: number | null;
-  total_events: number; justified: boolean; exemption_reason: string | null;
+  credited_seconds: number; total_events: number; justified: boolean; exemption_reason: string | null;
   official_holiday: string | null; incomplete: boolean;
   first_event: string | null; last_event: string | null;
   schedule: { start: string; end: string }[];
@@ -15,7 +15,7 @@ type Row = {
   labor_contract_seconds: number | null; scheduled_seconds: number;
   scheduled_contract_difference_seconds: number | null;
   worked_scheduled_difference_seconds: number;
-  worked_seconds: number; difference_seconds: number; justified_days: number;
+  credited_seconds: number; worked_seconds: number; difference_seconds: number; justified_days: number;
   incomplete_days: number; unmeasured_days: number; days: Day[];
 };
 type Report = { start_date: string; end_date: string; department_name: string; campus: string | null; rows: Row[] };
@@ -71,8 +71,8 @@ export default async function WeeklyHoursPage({ searchParams }: { searchParams: 
       <strong>Lectura del reporte · horas:minutos</strong>
       <p>Contrato laboral: horas semanales registradas con vigencia que cubra toda la semana. Si no existe o la semana cruza una frontera de vigencia, se indica sin referencia contractual completa; no se prorratea.</p>
       <p>Programadas: suma de los bloques del horario aplicable a cada fecha, incluidas sus excepciones. Los descansos oficiales sin turno autorizado aportan 0 horas. Esta cifra puede diferir del horario semestral usado para conciliar el contrato.</p>
-      <p>Trabajadas estimadas: tiempo entre primera y última checada distinta, descontando las pausas entre bloques del horario. No comprueba permanencia continua. Con cero o una checada no se calcula tiempo; “—” no significa una falta.</p>
-      <p>Las exenciones, incluido home office, se indican sin convertirlas en horas biométricas. La diferencia es informativa: no determina descuentos ni horas extra. Incluye toda la plantilla, sin filtros de incidencias o búsqueda.</p>
+      <p>Trabajadas estimadas: tiempo entre primera y última checada distinta, descontando las pausas entre bloques del horario. No comprueba permanencia continua. Cuando faltan checadas suficientes y están justificadas entrada y salida, se acreditan las horas del horario efectivo del día, descontando sus pausas. “—” indica que no hay tiempo calculable ni acreditado; no significa una falta.</p>
+      <p>Las horas acreditadas por justificación, incluido home office, se suman al total y se identifican en el detalle. Con checadas suficientes se conserva el cálculo observado, sin sumar de nuevo el horario. Una exención de solo entrada o solo salida no acredita una jornada completa. La diferencia es informativa: no determina descuentos ni horas extra. Incluye toda la plantilla, sin filtros de incidencias o búsqueda.</p>
       {unmeasured > 0 && <p><strong>Datos parciales:</strong> {unmeasured} días con horario carecen de marcas suficientes para calcular horas. Los totales solo suman tiempo calculable; pueden cambiar al cargar nuevos lotes.</p>}
     </aside>
     <h2>Resumen por colaborador</h2>
@@ -80,7 +80,7 @@ export default async function WeeklyHoursPage({ searchParams }: { searchParams: 
       {report.rows.map(row => <tr key={row.employee_id}><th scope="row">{row.employee_name}</th><td>{row.labor_contract_seconds == null ? "Sin referencia contractual completa" : duration(row.labor_contract_seconds)}</td><td>{duration(row.contracted_seconds)}</td><td>{duration(row.worked_seconds)}</td><td>{row.scheduled_contract_difference_seconds == null ? "—" : duration(row.scheduled_contract_difference_seconds)}</td><td>{duration(row.difference_seconds)}</td><td>{row.justified_days}</td><td>{row.unmeasured_days}</td></tr>)}
       {report.rows.length === 0 && <tr><td colSpan={8}>No hay colaboradores asignados a este departamento.</td></tr>}
     </tbody><tfoot><tr><th>Total</th><td>{completeContracts ? duration(laborTotal) : "—"}</td><td>{duration(contracted)}</td><td>{duration(worked)}</td><td>{completeContracts ? duration(contracted - laborTotal) : "—"}</td><td>{duration(worked - contracted)}</td><td>{report.rows.reduce((sum, row) => sum + row.justified_days, 0)}</td><td>{unmeasured}</td></tr></tfoot></table></div>
-    <p className={styles.caption}>* Días con horas programadas y sin tiempo calculable. Pueden estar justificados; no equivalen a faltas.</p>
+    <p className={styles.caption}>* Días con horas programadas y sin tiempo calculable. No incluyen jornadas completas acreditadas por justificación; no equivalen a faltas.</p>
     {report.rows.map(row => <section key={row.employee_id} className={styles.detail}>
       <h2>{row.employee_name}</h2>
       <div className={styles.tableWrap}><table><thead><tr><th>Día</th><th>Horario aplicable</th><th>Primera / última checada</th><th>Programadas</th><th>Trabajadas estimadas</th><th>Observaciones</th></tr></thead><tbody>{row.days.map(day => <tr key={day.date}>
@@ -88,7 +88,7 @@ export default async function WeeklyHoursPage({ searchParams }: { searchParams: 
         <td>{day.official_holiday ? "Descanso oficial" : day.schedule.map(block => `${block.start.slice(0, 5)}–${block.end.slice(0, 5)}`).join(" / ") || "Sin horario"}</td>
         <td>{day.first_event?.slice(0, 5) ?? "—"} / {day.total_events > 1 ? day.last_event?.slice(0, 5) : "—"}</td>
         <td>{duration(day.contracted_seconds)}</td><td>{day.worked_seconds === null ? "—" : duration(day.worked_seconds)}</td>
-        <td>{[day.justified ? `Justificado: ${reasons[day.exemption_reason ?? ""] ?? day.exemption_reason ?? "Exención"}` : null, day.official_holiday, day.incomplete ? "Checada incompleta · tiempo no calculable" : day.total_events === 0 ? "Sin eventos" : null].filter(Boolean).join(" · ") || `${day.total_events} checadas`}</td>
+        <td>{[day.justified ? `Justificado: ${reasons[day.exemption_reason ?? ""] ?? day.exemption_reason ?? "Exención"}` : null, day.credited_seconds > 0 ? `${duration(day.credited_seconds)} h acreditadas según horario` : null, day.official_holiday, day.incomplete ? "Checada incompleta · tiempo no calculable" : day.total_events === 0 ? "Sin eventos" : null].filter(Boolean).join(" · ") || `${day.total_events} checadas`}</td>
       </tr>)}</tbody></table></div>
     </section>)}
   </main>;

@@ -1,8 +1,9 @@
 """Read-only weekly comparison using the historical, effective daily schedule.
 
 Biometric events have no entry/exit direction. Worked time is consequently an
-estimate between the first and last distinct marks, excluding scheduled breaks;
-it must not be represented as payroll, overtime approval or justified time.
+estimate between the first and last distinct marks, excluding scheduled breaks.
+Fully justified days without sufficient marks receive their effective scheduled
+hours. This credit is reported separately from the biometric estimate.
 """
 from app.schemas.staff import StaffMobilePeriodRow
 
@@ -36,15 +37,19 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
                 breaks = sum(max(0, min(last, right[0]) - max(first, left[1]))
                              for left, right in zip(intervals, intervals[1:]))
                 worked = max(0, last - first - breaks)
+            credited = contracted if not complete and day.exempt_entry and day.exempt_exit else 0
+            if credited:
+                worked = credited
             days.append({
                 "date": day.date,
                 "contracted_seconds": contracted,
                 "worked_seconds": worked,
+                "credited_seconds": credited,
                 "total_events": day.total_events,
                 "justified": day.exempt_entry or day.exempt_exit,
                 "exemption_reason": day.exemption_reason,
                 "official_holiday": day.official_holiday_name if rest else None,
-                "incomplete": day.total_events > 0 and not complete,
+                "incomplete": day.total_events > 0 and not complete and not credited,
                 "schedule": day.schedule_intervals,
                 "first_event": day.first_event,
                 "last_event": day.last_event,
@@ -56,6 +61,7 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
             "employee_name": row.employee_name,
             "contracted_seconds": contracted,
             "worked_seconds": worked,
+            "credited_seconds": sum(day["credited_seconds"] for day in days),
             "difference_seconds": worked - contracted,
             "justified_days": sum(day["justified"] for day in days),
             "incomplete_days": sum(day["incomplete"] for day in days),
