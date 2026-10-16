@@ -48,16 +48,16 @@ export default async function CampusHoursPage({ searchParams }: { searchParams: 
     {report && <>
       <p className="my-4"><strong>{report.totals.employees} colaboradores</strong> · Orden alfabético por nombre registrado · Horas:minutos</p>
       <div className={styles.tableWrap}><table>
-        <thead><tr><th>N.º</th><th>Colaborador</th><th>Contrato laboral</th><th>Programadas</th><th>Trabajadas estimadas</th><th>Programadas − contrato</th><th>Trabajadas − programadas</th><th>Observaciones</th></tr></thead>
+        <thead><tr><th>N.º</th><th>Colaborador / Departamento</th><th>Contrato laboral</th><th>Programadas</th><th>Trabajadas estimadas</th><th>Programadas − contrato</th><th>Trabajadas − programadas</th><th>Observaciones</th></tr></thead>
         <tbody>{report.rows.map((row, index) => <tr key={row.employee_id}>
-          <td>{index + 1}</td><th scope="row">{row.employee_name}</th><td>{hoursLabel(row.labor_contract_seconds)}</td><td>{hoursLabel(row.scheduled_seconds)}</td><td>{hoursLabel(row.worked_seconds)}</td>
+          <td>{index + 1}</td><th scope="row">{row.employee_name}<span className="mt-1 block text-xs font-normal">{row.department_name}</span></th><td>{hoursLabel(row.labor_contract_seconds)}</td><td>{hoursLabel(row.scheduled_seconds)}</td><td>{hoursLabel(row.worked_seconds)}</td>
           <td>{row.scheduled_contract_difference_seconds === null ? "—" : hoursLabel(row.scheduled_contract_difference_seconds)}</td><td>{hoursLabel(row.worked_scheduled_difference_seconds)}</td><td>{row.observations}</td>
         </tr>)}{!report.rows.length && <tr><td colSpan={8}>No hay colaboradores asignados a este campus.</td></tr>}</tbody>
         <tfoot><tr><th colSpan={2}>Totales</th><td>{hoursLabel(report.totals.labor_contract_seconds)}</td><td>{hoursLabel(report.totals.scheduled_seconds)}</td><td>{hoursLabel(report.totals.worked_seconds)}</td><td colSpan={3}>Cada persona se contabiliza una sola vez en este campus.</td></tr></tfoot>
       </table></div>
       <aside className={`${styles.note} mt-5`}>
         <strong>Alcance y lectura</strong>
-        <p>Incluye todos los colaboradores asignados a departamentos activos del campus, aun sin checadas. No se divide la lista por departamento ni se presenta detalle diario. Las horas son por persona; no representan una distribución de tiempo entre sedes.</p>
+        <p>Incluye colaboradores asignados a departamentos activos del campus, aun sin checadas; excluye BAJAS, BAJAS NOMINA, Pasantes, Soluciones Castro y Consma Clean. Los departamentos del campus se muestran debajo del nombre, sin duplicar personas ni presentar detalle diario. Las horas son por persona; no representan una distribución de tiempo entre sedes.</p>
         <p>Contrato laboral: referencia semanal vigente durante toda la semana. Programadas: horario efectivo, incluidas excepciones y descansos oficiales. Trabajadas estimadas: primera a última checada, descontando pausas programadas; con marcas insuficientes y justificación de entrada y salida se acreditan las horas del horario efectivo del día.</p>
         <p>Las horas acreditadas se suman al total y se identifican en observaciones. En fuerza mayor con entrada y salida justificadas se completa una visita breve hasta las horas programadas, sin duplicar tiempo ni reducir una jornada observada mayor; las exenciones parciales no acreditan una jornada completa. Cero horas registradas o una diferencia negativa no equivalen automáticamente a faltas ni descuentos. Los lotes pendientes pueden cambiar los resultados.</p>
       </aside>

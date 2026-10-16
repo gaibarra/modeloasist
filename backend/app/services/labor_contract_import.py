@@ -296,6 +296,8 @@ def rollback(db, import_id, staff_id):
     receipt = db.get(LaborContractImport, import_id)
     if not receipt or receipt.reverted_at:
         raise ValueError("Operación inexistente o ya revertida")
+    if receipt.audit.get('campus_code'):
+        raise ValueError('Usa la reversión de contratos por campus para esta operación')
     for change in receipt.audit["changes"]:
         employee = db.get(Employee, change["employee_id"])
         if not employee or profile(db, employee) != change["after"] or contract_state(db, employee.id) != change["after_contract_state"]:

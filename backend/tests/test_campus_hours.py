@@ -96,11 +96,56 @@ def test_spanish_sort():
     assert sorted(["ÑU", "ÓSCAR", "NUBE", "ÁLVAREZ"], key=alphabetic_key) == ["ÁLVAREZ", "NUBE", "ÑU", "ÓSCAR"]
 
 
+@pytest.mark.parametrize('label', ['BAJAS', 'BAJAS NOMINA', ' bajas nómina ', 'bajas-nomina', 'Escuela Modelo-BAJAS',
+    'Pasantes', 'CME-Pasantes', 'Soluciones Castro', 'MTJ-Soluciones Castro',
+    'Consma Clean', 'CME-Consma Clean', ' consma   clean ', 'CVA-Soluciónes Castro'])
+def test_departed_labels(label):
+    from app.services.campus_hours import is_departed_label
+    assert is_departed_label(label)
+    assert not is_departed_label('CME-Administración')
+    assert not is_departed_label('BAJAS MÉDICAS')
+    assert not is_departed_label('Pasantes externos')
+    assert not is_departed_label('Consma Clean adicional')
+
+
+@pytest.mark.parametrize('location', ['legacy', 'campus', 'assignment'])
+@pytest.mark.parametrize('label', ['BAJAS', 'BAJAS NOMINA', 'CME-Pasantes', 'CME-Soluciones Castro', 'MTJ-Consma Clean'])
+def test_report_excludes_departed_from_rows_csv_and_totals(db, location, label):
+    if location == 'legacy':
+        db.get(Employee, 1).departamento = label
+    elif location == 'campus':
+        db.get(Employee, 1).campus = label
+    else:
+        db.add(Department(id=99, code=label.lower().replace(' ', '-'), name=label, campus=None))
+        db.add(EmployeeDepartment(employee_id=1, department_id=99, is_primary=False))
+    db.commit()
+    report = campus_report(db, AnalyticsService(db), 'Mérida', START, END)
+    assert report['rows'] == []
+    assert report['totals']['employees'] == 0
+    assert report['totals']['scheduled_seconds'] == report['totals']['worked_seconds'] == 0
+    assert 'PÉREZ' not in report_csv(report)
+    # Other reports keep their existing behavior.
+    assert len(AnalyticsService(db).staff_period_attendance(period_start=START, period_end=END, department_id=3)) == 1
+
+
+def test_departments_only_from_selected_campus_no_duplicates_and_csv(db):
+    db.add(Department(id=99, code='CME-A', name='CME-Arquitectura', campus='Mérida'))
+    db.add(EmployeeDepartment(employee_id=1, department_id=99, is_primary=False))
+    db.add(EmployeeDepartment(employee_id=1, department_id=4, is_primary=False))
+    db.commit()
+    report = campus_report(db, AnalyticsService(db), 'Mérida', START, END)
+    assert len(report['rows']) == 1
+    assert report['rows'][0]['department_name'] == 'CME-Arquitectura / CME-DTI'
+    csv = report_csv(report)
+    assert 'Departamento' in csv and 'CME-Arquitectura / CME-DTI' in csv
+    assert 'CCH-DTI' not in csv
+
+
 def test_three_figures_are_independent(db, monkeypatch):
     from tests.test_weekly_hours import summarize
     from app.services import campus_hours
     row = summarize()
-    def enrich(_db, rows, start, end):
+    def enrich(_db, rows, start, end, campus=None):
         assert (start, end) == (START, END)
         return [row | {"labor_contract_seconds": 40 * 3600, "scheduled_seconds": 8 * 3600,
                        "scheduled_contract_difference_seconds": -32 * 3600,

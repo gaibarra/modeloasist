@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Building2, ChevronLeft, ChevronRight, Pencil, Plus, Search, ShieldCheck, Trash2, Users, X, Loader2 } from "lucide-react";
 import styles from "./collaborator-manager.module.css";
+import { CollaboratorContract } from "./collaborator-contract";
 type Employee = { id: number; nombre: string; email: string; campus: string | null; departamento: string; division: string | null; external_employee_id: number | null; department_ids: number[]; primary_department_id: number | null };
 type Department = { id: number; name: string; campus: string | null; active: boolean };
 type Result = { items: Employee[]; total: number; registered: number };
@@ -62,6 +63,7 @@ export function CollaboratorManager() {
           <div className={styles.two}><label>Identificador de checador<input type="number" min={1} max={Number.MAX_SAFE_INTEGER} value={form.external_employee_id ?? ""} onChange={e => setForm({ ...form, external_employee_id: e.target.value ? Number(e.target.value) : null })} /></label><label>División<input maxLength={128} value={form.division} onChange={e => setForm({ ...form, division: e.target.value })} /></label></div>
           <fieldset><legend>Departamentos asignados <small>Selecciona uno o más</small></legend><div className={styles.departmentList}>{departments.filter(d => d.active || form.department_ids.includes(d.id)).map(d => <label key={d.id}><input type="checkbox" checked={form.department_ids.includes(d.id)} onChange={e => { const ids = e.target.checked ? [...form.department_ids, d.id] : form.department_ids.filter(id => id !== d.id); setForm({ ...form, department_ids: ids, primary_department_id: ids.includes(form.primary_department_id ?? 0) ? form.primary_department_id : ids[0] ?? null }); }} /><span>{d.name}<small>{d.campus || "Sin campus"}{!d.active ? " · Inactivo" : ""}</small></span></label>)}</div></fieldset>
           <label>Departamento principal<select required value={form.primary_department_id ?? ""} onChange={e => setForm({ ...form, primary_department_id: Number(e.target.value) })}><option value="">Selecciona un departamento</option>{departments.filter(d => form.department_ids.includes(d.id)).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select><small>El campus se obtiene del departamento principal.</small></label>
+          {mode === "edit" && selected && <CollaboratorContract key={selected.id} employeeId={selected.id} />}
         </>}{formError && <p role="alert" className={styles.error}>{formError}</p>}<div className={styles.formActions}><button type="button" className="secondary-button" disabled={saving} onClick={close}>Cancelar</button><button className={mode === "delete" ? styles.danger : "primary-button"} disabled={saving || (mode === "delete" ? confirmation !== "ELIMINAR" : !form.department_ids.length)}>{saving ? "Guardando…" : mode === "delete" ? "Eliminar colaborador" : "Guardar colaborador"}</button></div>
       </form>}
     </dialog>

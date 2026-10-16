@@ -3,7 +3,7 @@ export const canViewCampusHours = (email: string) => ["gaibarra@hotmail.com", "d
 export type CampusHoursReport = {
   campus: string; start_date: string; end_date: string;
   totals: { employees: number; labor_contract_seconds: number | null; scheduled_seconds: number; worked_seconds: number };
-  rows: { employee_id: number; employee_name: string; labor_contract_seconds: number | null;
+  rows: { employee_id: number; employee_name: string; department_name: string; labor_contract_seconds: number | null;
     scheduled_seconds: number; worked_seconds: number; scheduled_contract_difference_seconds: number | null;
     worked_scheduled_difference_seconds: number; observations: string }[];
 };

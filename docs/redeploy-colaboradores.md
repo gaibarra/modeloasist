@@ -1,7 +1,7 @@
 # Redespliegue del CRUD de colaboradores
 
 El script `infra/scripts/redeploy_colaboradores.sh` publica exactamente el commit
-`049fa5e511fd9d0ffda98a88f4f6fd3bdca0b004` (`091026a`). Usa `git archive`:
+`99227323e55c621379ede1015e1a99726842eaea` (`091026b`). Usa `git archive`:
 los cambios sin commit y los commits posteriores no se incorporan a la publicación.
 El script puede guardarse en un commit posterior sin cambiar la versión publicada.
 
@@ -36,10 +36,10 @@ restaura las rutas de la versión anterior. Si detecta modificaciones externas
 en esos overrides, se detiene para conservarlas y solicitar revisión manual.
 
 Al terminar imprime la ruta de un `rollback.sh` dentro de
-`/var/backups/asistenciamodelo/<fecha>-049fa5e`. Para volver manualmente:
+`/var/backups/asistenciamodelo/<fecha>-9922732`. Para volver manualmente:
 
 ```bash
-sudo bash /var/backups/asistenciamodelo/<fecha>-049fa5e/rollback.sh
+sudo bash /var/backups/asistenciamodelo/<fecha>-9922732/rollback.sh
 ```
 
 La reversión restaura el código; conserva los datos, incluidas las modificaciones
@@ -60,3 +60,7 @@ Esta versión incluye el CRUD y la acreditación de horas según el horario efec
 cuando están justificadas entrada y salida y faltan checadas suficientes.
 Verifica el reporte semanal, por campus y CSV; las horas acreditadas deben
 aparecer identificadas y no duplicar horas calculadas con checadas.
+
+En fuerza mayor con entrada y salida justificadas, las visitas breves también
+se completan hasta la jornada programada. Por ejemplo, 2:49 de checadas más
+5:11 acreditadas suman 8:00. Una jornada observada mayor no se reduce.

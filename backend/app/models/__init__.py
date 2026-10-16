@@ -17,8 +17,10 @@ from app.models.staff_holiday_work import StaffHolidayWorkAssignment
 from app.models.staff_attendance_exemption import StaffAttendanceExemption
 from app.models.staff_schedule_file_import import StaffScheduleFileImport
 from app.models.labor_contract import LaborContract, LaborContractImport
+from app.models.campus_labor_contract import CampusLaborContract
 
 __all__ = [
+    "CampusLaborContract",
     "LaborContract", "LaborContractImport",
 	"StaffScheduleFileImport",
 	"AttendanceEvent",

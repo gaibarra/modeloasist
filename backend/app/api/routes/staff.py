@@ -773,7 +773,7 @@ def get_staff_weekly_hours(
         "end_date": end_date,
         "department_name": department.name if department else "Departamento",
         "campus": department.campus if department else None,
-        "rows": enrich_weekly(db, summarize_weekly_hours(rows), start_date, end_date),
+        "rows": enrich_weekly(db, summarize_weekly_hours(rows), start_date, end_date, campus=department.campus if department else None),
     }
 
 

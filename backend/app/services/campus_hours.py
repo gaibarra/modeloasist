@@ -2,6 +2,10 @@
 import csv
 import io
 import unicodedata
+import re
+from collections import defaultdict
+from sqlalchemy import select
+from app.models import Employee, EmployeeDepartment, Department
 from app.services.weekly_hours import summarize_weekly_hours
 from app.services.labor_contracts import enrich_weekly
 
@@ -15,11 +19,36 @@ def alphabetic_key(name):
     return " ".join("".join(c for c in unicodedata.normalize("NFD", value) if not unicodedata.combining(c)).split())
 
 
+def is_departed_label(value):
+    value = ''.join(c for c in unicodedata.normalize('NFKD', value or '') if not unicodedata.combining(c))
+    value = ' '.join(re.sub(r'[/_-]+', ' ', value.upper()).split())
+    return bool(re.search(r'(?:^| )(?:BAJAS(?: NOMINA)?|PASANTES|SOLUCIONES CASTRO|CONSMA CLEAN)$', value))
+
+
+def report_departments(db, employee_ids, campus):
+    """Exclude designated groups even if another campus assignment exists."""
+    excluded, departments = set(), defaultdict(set)
+    for e in db.scalars(select(Employee).where(Employee.id.in_(employee_ids))):
+        if is_departed_label(e.departamento) or is_departed_label(e.campus):
+            excluded.add(e.id)
+    for eid, d in db.execute(select(EmployeeDepartment.employee_id, Department)
+            .join(Department, Department.id == EmployeeDepartment.department_id)
+            .where(EmployeeDepartment.employee_id.in_(employee_ids))):
+        if any(is_departed_label(v) for v in (d.name, d.code, d.campus)):
+            excluded.add(eid)
+        elif d.active and d.campus == campus:
+            departments[eid].add(d.name)
+    return excluded, {eid: ' / '.join(sorted(names, key=alphabetic_key)) for eid, names in departments.items()}
+
+
 def campus_report(db, analytics, campus, start, end):
     attendance = analytics.staff_period_attendance(period_start=start, period_end=end, campus=campus)
-    summaries = enrich_weekly(db, summarize_weekly_hours(attendance), start, end)
+    summaries = enrich_weekly(db, summarize_weekly_hours(attendance), start, end, campus=campus)
+    excluded, departments = report_departments(db, [r['employee_id'] for r in summaries], campus)
     rows = []
     for row, original in zip(summaries, attendance):
+        if row['employee_id'] in excluded:
+            continue
         notes = []
         if row["labor_contract_seconds"] is None:
             notes.append("Sin referencia contractual completa")
@@ -38,7 +67,8 @@ def campus_report(db, analytics, campus, start, end):
         rows.append({key: row[key] for key in (
             "employee_id", "employee_name", "labor_contract_seconds", "scheduled_seconds", "worked_seconds",
             "scheduled_contract_difference_seconds", "worked_scheduled_difference_seconds",
-        )} | {"observations": "; ".join(notes) or "—"})
+        )} | {"observations": "; ".join(notes) or "—",
+              "department_name": departments.get(row['employee_id'], 'Sin departamento')})
     rows.sort(key=lambda row: (alphabetic_key(row["employee_name"]), row["employee_id"]))
     all_contracts = all(r["labor_contract_seconds"] is not None for r in rows)
     return {"campus": campus, "start_date": start, "end_date": end, "rows": rows,
@@ -56,11 +86,14 @@ def hours(value):
 def report_csv(report):
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Campus", "Semana inicial", "Semana final", "Colaborador", "Contrato laboral (h:mm)", "Programadas (h:mm)", "Trabajadas estimadas (h:mm)", "Programadas - contrato", "Trabajadas - programadas", "Observaciones"])
+    writer.writerow(["Campus", "Semana inicial", "Semana final", "Colaborador", "Departamento", "Contrato laboral (h:mm)", "Programadas (h:mm)", "Trabajadas estimadas (h:mm)", "Programadas - contrato", "Trabajadas - programadas", "Observaciones"])
     for row in report["rows"]:
         name = row["employee_name"]
         if name.lstrip().startswith(("=", "+", "-", "@")):
             name = "'" + name
-        writer.writerow([report["campus"], report["start_date"], report["end_date"], name,
+        department = row['department_name']
+        if department.lstrip().startswith(('=', '+', '-', '@')):
+            department = "'" + department
+        writer.writerow([report["campus"], report["start_date"], report["end_date"], name, department,
                          *[hours(row[key]) for key in ("labor_contract_seconds", "scheduled_seconds", "worked_seconds", "scheduled_contract_difference_seconds", "worked_scheduled_difference_seconds")], row["observations"]])
     return "\ufeff" + output.getvalue()

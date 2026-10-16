@@ -10,6 +10,13 @@ from app.db.base import Base
 from app.dependencies.auth import AuthenticatedActor, get_current_actor
 from app.models.employee import Employee
 from app.models.staff_access import Department, EmployeeDepartment, StaffUser
+from app.models import CampusLaborContract, LaborContract, LaborContractImport
+from app.services.cme_contract_import import START, END, cme_employee_ids, replace_contract, snapshot
+from app.services.labor_contracts import covering_contract
+from sqlalchemy import inspect
+from decimal import Decimal
+import hashlib
+import uuid
 
 OWNER = "gaibarra@hotmail.com"
 
@@ -120,6 +127,67 @@ def get_employee(db, employee_id):
 @router.get("/{employee_id}")
 def detail(employee_id: int, db: Session = Depends(get_db)):
     return serialize(get_employee(db, employee_id))
+
+
+def contract_response(db, employee_id):
+    ready = inspect(db.connection()).has_table('campus_labor_contracts')
+    history = list(db.scalars(select(CampusLaborContract).where(CampusLaborContract.employee_id==employee_id,
+        CampusLaborContract.campus_code=='CME', CampusLaborContract.valid_from==START,
+        CampusLaborContract.valid_until==END).order_by(CampusLaborContract.id.desc()))) if ready else []
+    current = covering_contract(history, START, END, 'CME')
+    legacy = covering_contract(list(db.scalars(select(LaborContract).where(LaborContract.employee_id==employee_id))), START, END)
+    return dict(available=ready, eligible=employee_id in cme_employee_ids(db), campus_code='CME',
+        valid_from=str(START),valid_until=str(END),current=snapshot(current) if current else None,
+        legacy_minutes=legacy.weekly_minutes if legacy else None,
+        history=[snapshot(c) for c in history])
+
+
+@router.get('/{employee_id}/contract')
+def get_contract(employee_id: int, db: Session = Depends(get_db)):
+    get_employee(db,employee_id)
+    return contract_response(db,employee_id)
+
+
+class CampusContractWrite(BaseModel):
+    expected_id: int | None
+    weekly_hours: Decimal | None = Field(default=None,ge=0,le=168)
+    job_title: str = Field(default='',max_length=200)
+    department_code: str = Field(default='',max_length=100)
+    department_name: str = Field(default='',max_length=200)
+
+    @field_validator('weekly_hours')
+    @classmethod
+    def exact_minutes(cls,value):
+        if value is not None and value*60 != (value*60).to_integral_value():
+            raise ValueError('Las horas deben equivaler a minutos exactos')
+        return value
+
+
+@router.put('/{employee_id}/contract')
+def update_contract(employee_id: int, payload: CampusContractWrite,
+                    actor: AuthenticatedActor=Depends(require_owner), db: Session=Depends(get_db)):
+    get_employee(db,employee_id)
+    if not inspect(db.connection()).has_table('campus_labor_contracts'):
+        raise HTTPException(503,'Falta aplicar la migración de contratos por campus')
+    if employee_id not in cme_employee_ids(db):raise HTTPException(403,'Solo colaboradores con asignación activa CME')
+    staff=db.scalar(select(StaffUser).where(func.lower(StaffUser.email)==OWNER,StaffUser.is_active.is_(True)))
+    if staff is None:raise HTTPException(403,'No se pudo identificar al autorizador')
+    token=uuid.uuid4().hex
+    receipt=LaborContractImport(source_sha256=hashlib.sha256(token.encode()).hexdigest(),request_sha256=hashlib.sha256(('manual'+token).encode()).hexdigest(),
+        source_name='Edición manual de contrato CME',staff_user_id=staff.id,audit={})
+    try:
+        db.add(receipt);db.flush()
+        change=replace_contract(db,employee_id,dict(weekly_minutes=int(payload.weekly_hours*60) if payload.weekly_hours is not None else None,
+            job_title=payload.job_title.strip(),department_code=payload.department_code.strip(),department_name=payload.department_name.strip(),
+            source_employee_key='',source_sheet='Edición manual',source_row=0),receipt.id,payload.expected_id)
+        receipt.audit=dict(kind='campus_contract_edit',campus_code='CME',actor_type=actor.actor_type,
+            valid_from=str(START),valid_until=str(END),changes=[change])
+        db.commit()
+    except ValueError as exc:
+        db.rollback();raise HTTPException(409,str(exc))
+    except IntegrityError:
+        db.rollback();raise HTTPException(409,'Edición concurrente; recarga el contrato')
+    return contract_response(db,employee_id)
 
 
 def save(db, e, payload):
