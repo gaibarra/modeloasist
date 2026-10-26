@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.main import app
 from app.api.routes.staff import create_staff_attendance_exemption, list_staff_schedule_exceptions, revoke_staff_schedule_exception
@@ -213,7 +214,7 @@ def test_staff_bulk_schedule_preview_and_apply_uses_date_override():
     assert audit.previous_intervals == [{"start": "07:00:00", "end": "15:00:00"}]
     assert audit.applied_intervals == [{"start": "09:00:00", "end": "15:00:00"}]
     session.close()
-    daily = client.get("/staff/mobile/daily?department_id=3&start_date=2026-03-23&end_date=2026-03-23", headers=headers)
+    daily = client.get("/staff/mobile/daily?department_id=3&start_date=2026-03-23&end_date=2026-03-29", headers=headers)
     assert daily.status_code == 200
     assert daily.json()[0]["days"][0]["scheduled_start"] == "09:00:00"
 
@@ -289,6 +290,33 @@ def test_personal_exemption_marks_attendance_as_justified_without_touching_event
     assert row.exempt_entry is True
     assert row.first_event == time(7)
     session.close()
+
+
+@pytest.mark.parametrize("reason,label", [
+    ("cita_medica_enfermedad", "Cita Médica/Enfermedad"),
+    ("asunto_personal", "Asunto Personal"),
+    ("retardo_justificado", "Retardo Justificado"),
+    ("vacaciones", "Vacaciones"),
+])
+@pytest.mark.parametrize("entry,exit", [(True, False), (False, True), (True, True)])
+def test_new_exemption_reasons_preserve_scope_and_history(reason, label, entry, exit):
+    seed_staff_mobile_data()
+    with TestingSessionLocal() as session:
+        staff = session.get(StaffUser, 10)
+        actor = AuthenticatedActor(actor_type="staff", is_admin=False, must_change_password=False, staff=staff, department_ids={3})
+        events_before = session.query(AttendanceEvent).count()
+        result = create_staff_attendance_exemption(
+            StaffAttendanceExemptionRequest(department_id=3, employee_id=1,
+                start_date=date(2026, 8, 24), end_date=date(2026, 8, 25),
+                reason=reason, exempt_entry=entry, exempt_exit=exit), actor=actor, db=session)
+        assert len(result) == 2
+        assert all(item.reason == reason and item.exempt_entry == entry and item.exempt_exit == exit for item in result)
+        history = list_staff_schedule_exceptions(department_id=3, employee_id=1, actor=actor, db=session)
+        assert history.total == 2
+        assert all(label in item.instruction for item in history.items)
+        row = AnalyticsService(session).staff_daily_attendance(target_date=date(2026, 8, 24), department_id=3)[0]
+        assert row.exemption_reason == reason
+        assert session.query(AttendanceEvent).count() == events_before
 
 
 def test_home_office_exemption_justifies_both_attendance_marks():

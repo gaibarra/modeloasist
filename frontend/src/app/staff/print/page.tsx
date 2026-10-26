@@ -148,6 +148,10 @@ const formatExemptionReason = (reason: string | null) => {
     permiso_staff: "Permiso de staff",
     fuerza_mayor: "Fuerza mayor",
     home_office: "Home office",
+    cita_medica_enfermedad: "Cita Médica/Enfermedad",
+    asunto_personal: "Asunto Personal",
+    retardo_justificado: "Retardo Justificado",
+    vacaciones: "Vacaciones",
     otro: "Otro",
   };
   return reason ? labels[reason] ?? reason : null;

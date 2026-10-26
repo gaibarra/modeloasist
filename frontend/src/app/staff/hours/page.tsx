@@ -22,7 +22,11 @@ type Report = { start_date: string; end_date: string; department_name: string; c
 type Params = { department_id?: string; start_date?: string; end_date?: string; filter?: string; q?: string; sort?: string };
 const reasons: Record<string, string> = {
   incapacidad: "Incapacidad", comision_institucional: "Comisión institucional",
-  permiso_staff: "Permiso de staff", fuerza_mayor: "Fuerza mayor", home_office: "Home office", otro: "Otro",
+  permiso_staff: "Permiso de staff", fuerza_mayor: "Fuerza mayor", home_office: "Home office",
+    cita_medica_enfermedad: "Cita Médica/Enfermedad",
+    asunto_personal: "Asunto Personal",
+    retardo_justificado: "Retardo Justificado",
+    vacaciones: "Vacaciones", otro: "Otro",
 };
 function duration(seconds: number) {
   const minutes = Math.round(Math.abs(seconds) / 60);

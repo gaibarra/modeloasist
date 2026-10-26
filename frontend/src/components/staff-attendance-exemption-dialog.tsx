@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const reasons = [["incapacidad", "Incapacidad"], ["comision_institucional", "Comisión institucional"], ["permiso_staff", "Permiso de staff"], ["fuerza_mayor", "Fuerza mayor"], ["home_office", "Home office"], ["otro", "Otro"]] as const;
+const reasons = [["incapacidad", "Incapacidad"], ["comision_institucional", "Comisión institucional"], ["permiso_staff", "Permiso de staff"], ["fuerza_mayor", "Fuerza mayor"], ["home_office", "Home office"], ["cita_medica_enfermedad", "Cita Médica/Enfermedad"], ["asunto_personal", "Asunto Personal"], ["retardo_justificado", "Retardo Justificado"], ["vacaciones", "Vacaciones"], ["otro", "Otro"]] as const;
 
 export function StaffAttendanceExemptionDialog({ departmentId, employeeId, employeeName, defaultDate }: { departmentId: number; employeeId: number; employeeName: string; defaultDate: string }) {
   const [open, setOpen] = useState(false); const [startDate, setStartDate] = useState(defaultDate); const [endDate, setEndDate] = useState(defaultDate); const [entry, setEntry] = useState(true); const [exit, setExit] = useState(false); const [reason, setReason] = useState("permiso_staff"); const [note, setNote] = useState(""); const [message, setMessage] = useState<string | null>(null); const [saving, setSaving] = useState(false);

@@ -75,7 +75,13 @@ from app.services.campus_hours import RECTOR_REPORT_EMAILS, REPORT_CAMPUSES, cam
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
-_EXEMPTION_REASONS = {"incapacidad", "comision_institucional", "permiso_staff", "fuerza_mayor", "home_office", "otro"}
+_EXEMPTION_REASONS = {"incapacidad", "comision_institucional", "permiso_staff", "fuerza_mayor", "home_office", "cita_medica_enfermedad", "asunto_personal", "retardo_justificado", "vacaciones", "otro"}
+_EXEMPTION_REASON_LABELS = {
+    "cita_medica_enfermedad": "Cita Médica/Enfermedad",
+    "asunto_personal": "Asunto Personal",
+    "retardo_justificado": "Retardo Justificado",
+    "vacaciones": "Vacaciones",
+}
 _MAX_STANDARD_EXEMPTION_DAYS = 63
 _MAX_HOME_OFFICE_EXEMPTION_DAYS = 184
 
@@ -233,7 +239,7 @@ def list_staff_schedule_exceptions(
         scope = "entrada y salida" if exemption.exempt_entry and exemption.exempt_exit else "entrada" if exemption.exempt_entry else "salida"
         revoking_staff = db.get(StaffUser, exemption.revoked_by_staff_user_id) if exemption.revoked_by_staff_user_id else None
         revoked_note = f" Revocada por {revoking_staff.full_name if revoking_staff else 'staff no identificado'} el {exemption.revoked_at.strftime('%d/%m/%Y, %H:%M')}" if exemption.revoked_at else ""
-        items.append(StaffScheduleExceptionHistoryItem(id=f"attendance-exemption-{exemption.id}", target_date=exemption.target_date, operation="attendance_exemption", instruction=f"Checada exentada: {scope}. Motivo: {exemption.reason}.{f' {exemption.note}' if exemption.note else ''}{revoked_note}", author_name=author_name, created_at=exemption.created_at, applied_intervals=[], current_intervals=[], is_current=exemption.revoked_at is None, historical_detail_available=True, deletion_kind="attendance_exemption" if exemption.revoked_at is None else None))
+        items.append(StaffScheduleExceptionHistoryItem(id=f"attendance-exemption-{exemption.id}", target_date=exemption.target_date, operation="attendance_exemption", instruction=f"Checada exentada: {scope}. Motivo: {_EXEMPTION_REASON_LABELS.get(exemption.reason, exemption.reason)}.{f' {exemption.note}' if exemption.note else ''}{revoked_note}", author_name=author_name, created_at=exemption.created_at, applied_intervals=[], current_intervals=[], is_current=exemption.revoked_at is None, historical_detail_available=True, deletion_kind="attendance_exemption" if exemption.revoked_at is None else None))
     items.sort(key=lambda item: (item.target_date, item.created_at or datetime.min), reverse=True)
     total = len(items)
     page = items[offset:offset + limit]
