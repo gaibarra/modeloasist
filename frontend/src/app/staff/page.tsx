@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { ChangePasswordLink } from "@/components/change-password-link";
 import { InstitutionHeader } from "@/components/institution-header";
@@ -636,7 +637,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                 <input type="hidden" name="filter" value={activePeriodFilter} />
                 <label className="space-y-2 text-sm font-medium text-foreground">
                   Departamento
-                  <select
+                  <AutoSubmitSelect
                     name="department_id"
                     defaultValue={selectedDepartmentId > 0 ? String(selectedDepartmentId) : ""}
                     className="field-input"
@@ -647,7 +648,7 @@ export default async function StaffMobilePage({ searchParams }: StaffPageProps) 
                         {department.name}
                       </option>
                     ))}
-                  </select>
+                  </AutoSubmitSelect>
                 </label>
                 <PeriodDateRangeFields startDate={startDate} endDate={endDate} />
                 <label className="space-y-2 text-sm font-medium text-foreground">
