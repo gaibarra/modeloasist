@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.models import Employee, EmployeeDepartment, Department
 from app.services.weekly_hours import summarize_weekly_hours
 from app.services.labor_contracts import enrich_weekly
+from app.services.report_eligibility import is_baja_label
 
 RECTOR_REPORT_EMAILS = frozenset({"gaibarra@hotmail.com", "duchliz@modelo.edu.mx"})
 REPORT_CAMPUSES = ("Chetumal", "Montejo", "Mérida", "Valladolid")
@@ -20,9 +21,11 @@ def alphabetic_key(name):
 
 
 def is_departed_label(value):
+    if is_baja_label(value):
+        return True
     value = ''.join(c for c in unicodedata.normalize('NFKD', value or '') if not unicodedata.combining(c))
     value = ' '.join(re.sub(r'[/_-]+', ' ', value.upper()).split())
-    return bool(re.search(r'(?:^| )(?:BAJAS(?: NOMINA)?|PASANTES|SOLUCIONES CASTRO|CONSMA CLEAN)$', value))
+    return bool(re.search(r'(?:^| )(?:PASANTES|SOLUCIONES CASTRO|CONSMA CLEAN)$', value))
 
 
 def report_departments(db, employee_ids, campus):

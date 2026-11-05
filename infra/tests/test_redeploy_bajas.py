@@ -1,0 +1,125 @@
+"""Local rollback tests with mocked systemctl; never talks to real services."""
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts/redeploy_bajas.sh"
+
+
+class DeployScriptTests(unittest.TestCase):
+    def test_shell_and_embedded_python_syntax(self):
+        subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", SCRIPT.read_text(), re.S)
+        self.assertGreaterEqual(len(blocks), 3)
+        for block in blocks:
+            compile(block, "embedded-python", "exec")
+
+    def test_report_overlay_is_exact_and_current(self):
+        import hashlib
+        source = SCRIPT.read_text()
+        manifests = re.findall(r"<<'EXEMPTION_HASHES'\n(.*?)\nEXEMPTION_HASHES", source, re.S)
+        self.assertEqual(len(manifests), 2)
+        self.assertEqual(manifests[0], manifests[1])
+        expected = {
+            "backend/app/api/routes/employee_management.py",
+            "backend/app/api/routes/employees.py",
+            "backend/app/api/routes/insights.py",
+            "backend/app/api/routes/staff.py",
+            "backend/app/services/analytics.py",
+            "backend/app/services/attendance_import.py",
+            "backend/app/services/campus_hours.py",
+            "backend/app/services/labor_contracts.py",
+            "backend/app/services/report_eligibility.py",
+            "backend/tests/test_report_eligibility.py",
+            "backend/tests/test_campus_hours.py",
+            "frontend/src/app/api/colaboradores/[[...path]]/route.ts",
+            "frontend/src/components/collaborator-manager.tsx",
+            "frontend/src/lib/department-selection.ts",
+            "frontend/tests/department-selection.test.cjs",
+        }
+        paths = set()
+        for line in manifests[0].splitlines():
+            digest, path = line.split("  ")
+            paths.add(path)
+            self.assertEqual(hashlib.sha256((SCRIPT.parents[2] / path).read_bytes()).hexdigest(), digest)
+        self.assertEqual(paths, expected)
+        self.assertNotIn("git_repo archive", source)
+        self.assertNotIn("alembic upgrade", source)
+        self.assertIn("20261026T142227Z-vacaciones/backend", source)
+        self.assertIn("zzzzzzzzzzzzzz-bajas.conf", source)
+        self.assertGreater("zzzzzzzzzzzzzz-bajas.conf", "zzzzzzzzzzzzz-department-auto.conf")
+        self.assertIn('cd "$OLD_BACK"', source)
+        self.assertIn('20261103T150239Z-department-auto/frontend', source)
+        self.assertIn('origin=$OLD_FRONT', source)
+        for command in ('alembic upgrade', 'systemctl restart nginx', 'pg_restore'):
+            self.assertNotIn(command, source)
+
+    def test_invalid_mode_exits_before_any_action(self):
+        result = subprocess.run(["bash", str(SCRIPT), "--invalid"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Uso:", result.stderr)
+
+    def run_cleanup(self, frontend_exists=True, finished=False, external_edit=False):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "new-backend.conf").write_text("new-backend")
+            (root / "new-frontend.conf").write_text("new-frontend")
+            (root / "backend.conf").write_text("external-change" if external_edit else "new-backend")
+            if frontend_exists:
+                (root / "frontend.conf").write_text("new-frontend")
+            (root / "old-override.conf").write_text("original-7bd4080")
+            function = SCRIPT.read_text().split("cleanup() {", 1)[1].split("trap cleanup EXIT", 1)[0]
+            source = f'''
+BACKUP='{root}'
+BACK_DROP='{root}/backend.conf'
+FRONT_DROP='{root}/frontend.conf'
+OLD_BACK=/old/backend
+OLD_FRONT=/old/frontend
+BACKEND=backend
+FRONTEND=frontend
+SMOKE_BACK=''
+SMOKE_FRONT=''
+SWITCHED=1
+FINISHED={int(finished)}
+systemctl() {{
+  if [[ "$1" == show ]]; then
+    if [[ "$2" == backend ]]; then echo /old/backend; else echo /old/frontend; fi
+  else
+    echo "MOCK $*"
+  fi
+}}
+wait_http() {{ return 0; }}
+cleanup() {{{function}
+true
+cleanup
+'''
+            result = subprocess.run(["bash", "-s"], input=source, text=True, capture_output=True)
+            self.assertEqual((root / "old-override.conf").read_text(), "original-7bd4080")
+            if finished or external_edit:
+                self.assertTrue((root / "backend.conf").exists())
+                self.assertNotIn("MOCK restart", result.stdout)
+            else:
+                self.assertFalse((root / "backend.conf").exists())
+                self.assertFalse((root / "frontend.conf").exists())
+                self.assertTrue((root / "failed-backend-override.conf").exists())
+                self.assertIn("MOCK restart backend", result.stdout)
+                self.assertIn("MOCK restart frontend", result.stdout)
+            self.assertEqual(result.returncode, 0 if finished else 1, result.stderr)
+
+    def test_failure_restores_previous_overrides(self):
+        self.run_cleanup()
+
+    def test_failure_before_frontend_switch(self):
+        self.run_cleanup(frontend_exists=False)
+
+    def test_success_never_rolls_back(self):
+        self.run_cleanup(finished=True)
+
+    def test_external_override_edits_are_preserved(self):
+        self.run_cleanup(external_edit=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

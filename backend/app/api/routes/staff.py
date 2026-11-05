@@ -19,6 +19,7 @@ from app.dependencies.auth import (
 )
 from app.dependencies.services import get_analytics_service, get_attendance_import_service
 from app.models.employee import Employee
+from app.services.report_eligibility import report_employee_clause, eligibility_snapshot
 from app.models.schedule import Schedule
 from app.models.attendance_event import AttendanceEvent
 from app.models.attendance_import_batch import AttendanceImportBatch
@@ -532,7 +533,8 @@ def get_staff_default_week(
     db: Session = Depends(get_db),
 ) -> StaffDefaultWeek:
     _require_staff_schema(db)
-    latest_event_date = db.execute(select(func.max(AttendanceEvent.fecha))).scalar_one_or_none()
+    latest_event_date = db.execute(select(func.max(AttendanceEvent.fecha)).where(
+        AttendanceEvent.employee_id.not_in(eligibility_snapshot(db)[0]))).scalar_one_or_none()
     start_date, end_date = _resolve_default_attendance_week(latest_event_date)
     return StaffDefaultWeek(
         latest_event_date=latest_event_date,
@@ -871,7 +873,7 @@ def list_staff_department_employees(
             Employee.departamento.label("legacy_department"),
         )
         .join(EmployeeDepartment, EmployeeDepartment.employee_id == Employee.id)
-        .where(EmployeeDepartment.department_id == department_id)
+        .where(EmployeeDepartment.department_id == department_id, report_employee_clause(db))
         .order_by(Employee.nombre.asc())
     ).all()
     return [
@@ -914,10 +916,10 @@ def get_staff_employee_year_summary(
         .join(EmployeeDepartment, EmployeeDepartment.employee_id == Employee.id)
         .join(Department, Department.id == EmployeeDepartment.department_id)
         .where(EmployeeDepartment.department_id == department_id)
-        .where(Employee.id == employee_id)
+        .where(Employee.id == employee_id, report_employee_clause(db))
     ).first()
     if employee_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Colaborador no encontrado en este departamento")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Colaborador no disponible para reportes en este departamento")
 
     report_window_end = min(_resolve_previous_week_sunday(date.today()), REPORT_YEAR_END)
     if report_window_end < REPORT_YEAR_START:
@@ -948,7 +950,7 @@ def get_staff_employee_year_summary(
         late_days=sum(1 for day in annual_row.days if day.status == "late"),
         justified_days=sum(1 for day in annual_row.days if day.status in {"justified", "entry_excused", "exit_excused"}),
         punctuality_rate=(
-            (
+            max(0,
                 annual_row.active_days
                 - sum(1 for day in annual_row.days if day.status in {"late", "absence"})
             )

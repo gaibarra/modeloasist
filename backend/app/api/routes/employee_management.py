@@ -1,7 +1,7 @@
 """Owner-only collaborator directory and mutations."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, TypeAdapter, field_validator
 from sqlalchemy import func, or_, select, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -13,6 +13,7 @@ from app.models.staff_access import Department, EmployeeDepartment, StaffUser
 from app.models import CampusLaborContract, LaborContract, LaborContractImport
 from app.services.cme_contract_import import START, END, cme_employee_ids, replace_contract, snapshot
 from app.services.labor_contracts import covering_contract
+from app.services.report_eligibility import is_baja_department, is_baja_label
 from sqlalchemy import inspect
 from decimal import Decimal
 import hashlib
@@ -35,7 +36,7 @@ router = APIRouter(
 
 class EmployeeWrite(BaseModel):
     nombre: str = Field(min_length=2, max_length=200)
-    email: EmailStr
+    email: str = Field(max_length=255)
     department_ids: list[int] = Field(min_length=1, max_length=50)
     primary_department_id: int
     external_employee_id: int | None = Field(default=None, ge=1, le=9223372036854775807)
@@ -45,6 +46,16 @@ class EmployeeWrite(BaseModel):
     @classmethod
     def trim(cls, value):
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        value = value.strip().lower()
+        # Existing imported placeholders must not prevent a baja/reactivation.
+        import re
+        if re.fullmatch(r'emp-\d+@pendiente\.local', value):
+            return value
+        return str(TypeAdapter(EmailStr).validate_python(value))
 
 
 def serialize(e):
@@ -56,6 +67,8 @@ def serialize(e):
         departamento=e.departamento,
         division=e.division,
         external_employee_id=e.external_employee_id,
+        is_departed=(is_baja_label(e.departamento) or is_baja_label(e.campus)
+            or any(is_baja_department(x.department) for x in e.department_links)),
         department_ids=[x.department_id for x in e.department_links],
         primary_department_id=next(
             (x.department_id for x in e.department_links if x.is_primary), None
@@ -66,7 +79,7 @@ def serialize(e):
 @router.get("/departments")
 def departments(db: Session = Depends(get_db)):
     return [
-        dict(id=d.id, name=d.name, campus=d.campus, active=d.active)
+        dict(id=d.id, name=d.name, campus=d.campus, active=d.active, is_departed=is_baja_department(d))
         for d in db.scalars(select(Department).order_by(Department.name))
     ]
 
@@ -195,7 +208,11 @@ def save(db, e, payload):
     depts = {d.id: d for d in db.scalars(select(Department).where(Department.id.in_(ids)))}
     if set(depts) != ids or payload.primary_department_id not in ids:
         raise HTTPException(422, "Selecciona departamentos válidos y uno principal")
+    if any(is_baja_department(d) for d in depts.values()) and len(ids) != 1:
+        raise HTTPException(422, "BAJAS y BAJAS NOMINA deben ser una asignación exclusiva")
     email = str(payload.email).lower()
+    if email.endswith('@pendiente.local') and email != (e.email or '').lower():
+        raise HTTPException(422, "El correo provisional solo puede conservarse en su registro original")
     if (e.email or "").strip().lower() == OWNER and email != OWNER:
         raise HTTPException(409, "El correo de la cuenta administradora está protegido")
     if db.scalar(

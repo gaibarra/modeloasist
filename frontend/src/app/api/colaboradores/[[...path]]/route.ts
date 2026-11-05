@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { BACKEND_API_BASE_URL, SESSION_COOKIE_NAME } from "@/lib/auth";
 import { isTrustedCollaboratorOrigin } from "@/lib/collaborator-origin";
 async function proxy(request: NextRequest, context: { params: Promise<{ path?: string[] }> }) {
@@ -15,7 +16,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path?: s
       body: ["POST", "PUT"].includes(request.method) ? await request.text() : undefined,
       cache: "no-store", signal: AbortSignal.timeout(10000),
     });
-    return new NextResponse(response.status === 204 ? null : await response.text(), { status: response.status, headers: { "content-type": "application/json" } });
+    if (response.ok && request.method !== "GET") {
+      revalidatePath("/staff", "layout");
+      revalidatePath("/colaboradores");
+    }
+    return new NextResponse(response.status === 204 ? null : await response.text(), { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   } catch { return NextResponse.json({ detail: "No se pudo conectar. Intenta nuevamente." }, { status: 502 }); }
 }
 export const GET = proxy;

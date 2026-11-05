@@ -693,6 +693,8 @@ class AttendanceImportService:
             employee.id: employee
             for employee in self._db.query(Employee).filter(Employee.id.in_(employee_ids)).all()
         }
+        from app.services.report_eligibility import eligibility_snapshot
+        departed_ids = set(eligibility_snapshot(self._db)[0])
         auto_created: list[AttendanceImportAutoCreatedEmployee] = []
         rows_by_employee: dict[int, ParsedAttendanceRow] = {}
         for row in rows:
@@ -705,6 +707,9 @@ class AttendanceImportService:
             canonical_department = canonicalize_department(row.departamento_raw)
             existing_employee = existing.get(employee_id)
             if existing_employee is not None:
+                if employee_id in departed_ids:
+                    # Store biometric marks, but only explicit directory edits reactivate.
+                    continue
                 if canonical_department.canonical_name and existing_employee.departamento != canonical_department.canonical_name:
                     existing_employee.departamento = canonical_department.canonical_name
                 canonical_campus = canonical_department.campus or derive_department_campus(row.departamento_raw)

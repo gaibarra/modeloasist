@@ -124,8 +124,8 @@ def test_report_excludes_departed_from_rows_csv_and_totals(db, location, label):
     assert report['totals']['employees'] == 0
     assert report['totals']['scheduled_seconds'] == report['totals']['worked_seconds'] == 0
     assert 'PÉREZ' not in report_csv(report)
-    # Other reports keep their existing behavior.
-    assert len(AnalyticsService(db).staff_period_attendance(period_start=START, period_end=END, department_id=3)) == 1
+    # Only bajas are excluded globally; suppliers remain rector-report specific.
+    assert len(AnalyticsService(db).staff_period_attendance(period_start=START, period_end=END, department_id=3)) == (0 if label.startswith('BAJAS') else 1)
 
 
 def test_departments_only_from_selected_campus_no_duplicates_and_csv(db):

@@ -64,11 +64,12 @@ def comparison(contract_minutes, scheduled_minutes):
 
 
 def reconciliation(db, department_ids, year=2026, semester=2, employee_id=None):
+    from app.services.report_eligibility import report_employee_clause
     start, end = date(year, 1 if semester == 1 else 8, 1), date(year, 6 if semester == 1 else 12, 30 if semester == 1 else 31)
     query = select(Employee, Department).join(EmployeeDepartment, EmployeeDepartment.employee_id == Employee.id).join(Department, Department.id == EmployeeDepartment.department_id).where(Department.id.in_(department_ids))
     if employee_id is not None:
         query = query.where(Employee.id == employee_id)
-    people = db.execute(query.order_by(Employee.nombre, Department.name)).all()
+    people = db.execute(query.where(report_employee_clause(db)).order_by(Employee.nombre, Department.name)).all()
     ids = {e.id for e, _ in people}
     schedules = {s.employee_id: s for s in db.scalars(select(StaffSemesterSchedule).options(selectinload(StaffSemesterSchedule.intervals)).where(StaffSemesterSchedule.employee_id.in_(ids), StaffSemesterSchedule.academic_year == year, StaffSemesterSchedule.semester == semester))}
     contract_map = defaultdict(list)

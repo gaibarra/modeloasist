@@ -11,6 +11,7 @@ from app.schemas.employee import EmployeeInsight, EmployeeSummary, ScheduleWindo
 from app.schemas.insight import InsightPayload
 from app.services.ai_insights import AiInsightsService
 from app.services.analytics import AnalyticsService, REPORT_YEAR, REPORT_YEAR_END, REPORT_YEAR_START
+from app.services.report_eligibility import eligibility_snapshot
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
@@ -31,6 +32,8 @@ async def employee_insight(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Los reportes solo admiten fechas dentro de {REPORT_YEAR}",
         )
+    if employee_id in eligibility_snapshot(analytics._db)[0]:
+        raise HTTPException(status_code=404, detail="Colaborador no disponible para reportes")
     stats = analytics.employee_stats(employee_id, start, end)
     if not stats:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empleado no encontrado")

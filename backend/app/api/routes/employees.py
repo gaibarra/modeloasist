@@ -14,6 +14,7 @@ from app.schemas.auth import (
 from app.schemas.analytics import EmployeeWeeklyCheckin, WeeklyCheckinDay
 from app.schemas.employee import EmployeeSummary
 from app.services.analytics import AnalyticsService
+from app.services.report_eligibility import report_employee_clause
 from app.dependencies.services import get_analytics_service
 
 router = APIRouter(prefix="/employees", tags=["employees"])
@@ -24,7 +25,7 @@ def list_employees(
     db: Session = Depends(get_db),
     _: object = Depends(require_admin_employee),
 ) -> list[EmployeeSummary]:
-    employees = db.query(Employee).order_by(Employee.nombre.asc()).limit(50).all()
+    employees = db.query(Employee).filter(report_employee_clause(db)).order_by(Employee.nombre.asc()).limit(50).all()
     return [
         EmployeeSummary(id=e.id, nombre=e.nombre, departamento=e.departamento, email=e.email)
         for e in employees
@@ -39,7 +40,7 @@ def get_my_attendance_record(
     employee = authenticated.employee
     record = analytics.employee_attendance_record(employee.id)
     if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Empleado no encontrado")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Colaborador no disponible para reportes")
     return SelfAttendanceRecordResponse(
         employee=AuthEmployee(
             id=employee.id,

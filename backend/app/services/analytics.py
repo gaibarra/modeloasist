@@ -11,6 +11,7 @@ from typing import Iterable, Sequence
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+from app.services.report_eligibility import report_statement, eligibility_snapshot
 
 from app.models.attendance_event import AttendanceEvent
 from app.models.attendance_weekly_metric import AttendanceWeeklyMetric
@@ -262,6 +263,9 @@ class AnalyticsService:
     def __init__(self, db: Session) -> None:
         self._db = db
 
+    def _report_execute(self, statement):
+        return self._db.execute(report_statement(self._db, statement))
+
     def _report_year_filter(self):
         return AttendanceEvent.fecha.between(REPORT_YEAR_START, REPORT_YEAR_END)
 
@@ -275,7 +279,7 @@ class AnalyticsService:
         return max(start, REPORT_YEAR_START), min(end, REPORT_YEAR_END)
 
     def dashboard_snapshot(self, days: int = 30, *, force_refresh: bool = False) -> DashboardSnapshot:
-        cache_key = ("dashboard", days, min(date.today(), REPORT_YEAR_END))
+        cache_key = ("dashboard", eligibility_snapshot(self._db)[1], days, min(date.today(), REPORT_YEAR_END))
         if not force_refresh:
             cached = _cache_get(cache_key)
             if cached is not None:
@@ -323,7 +327,7 @@ class AnalyticsService:
     def weekly_history_table(self, weeks: int = 12, *, force_refresh: bool = False) -> list[WeeklyHistoryRow]:
         if weeks <= 0:
             weeks = 1
-        cache_key = ("weekly_history", weeks, min(date.today(), REPORT_YEAR_END))
+        cache_key = ("weekly_history", eligibility_snapshot(self._db)[1], weeks, min(date.today(), REPORT_YEAR_END))
         if not force_refresh:
             cached = _cache_get(cache_key)
             if cached is not None:
@@ -457,7 +461,7 @@ class AnalyticsService:
             .group_by(Employee.campus, Employee.departamento)
         )
         counts: dict[str, int] = defaultdict(int)
-        for campus_value, departamento, total in self._db.execute(stmt):
+        for campus_value, departamento, total in self._report_execute(stmt):
             campus = campus_value or _campus_from_department(departamento)
             counts[campus] += int(total)
         return counts
@@ -472,7 +476,7 @@ class AnalyticsService:
             .group_by(Employee.campus, Employee.departamento)
         )
         counts: dict[str, int] = defaultdict(int)
-        for campus_value, departamento, total in self._db.execute(stmt):
+        for campus_value, departamento, total in self._report_execute(stmt):
             campus = campus_value or _campus_from_department(departamento)
             counts[campus] += int(total)
         return counts
@@ -498,7 +502,7 @@ class AnalyticsService:
             )
         )
         stmt = stmt.where(self._merge_with_report_year(window_filter))
-        rows = self._db.execute(stmt).all()
+        rows = self._report_execute(stmt).all()
         employee_ids = {row.employee_id for row in rows}
         schedule_map = self._schedule_map(employee_ids)
         schedule_map, _ = self._fill_schedule_map_with_inference(schedule_map, rows)
@@ -728,6 +732,7 @@ class AnalyticsService:
             return []
         cache_key = (
             "employee_rankings",
+            eligibility_snapshot(self._db)[1],
             days,
             campus or "",
             department or "",
@@ -771,7 +776,7 @@ class AnalyticsService:
         )
         if normalized_employee_ids:
             employee_stmt = employee_stmt.where(Employee.id.in_(list(normalized_employee_ids)))
-        employee_rows = self._db.execute(employee_stmt).all()
+        employee_rows = self._report_execute(employee_stmt).all()
         employee_ids = [row.employee_id for row in employee_rows]
         schedule_map_all = self._primary_schedule_map(employee_ids)
 
@@ -823,7 +828,7 @@ class AnalyticsService:
         recent_limit: int = 30,
     ) -> EmployeeAttendanceRecord | None:
         employee_row = (
-            self._db.execute(
+            self._report_execute(
                 select(
                     Employee.id.label("employee_id"),
                     Employee.nombre.label("nombre"),
@@ -871,7 +876,7 @@ class AnalyticsService:
             .order_by(AttendanceEvent.event_ts.desc())
             .limit(recent_limit)
         )
-        recent_events = list(self._db.scalars(recent_stmt).all())
+        recent_events = list(self._report_execute(recent_stmt).scalars().all())
         return EmployeeAttendanceRecord(employee=current, recent_events=recent_events)
 
     def staff_daily_attendance(
@@ -917,7 +922,7 @@ class AnalyticsService:
             if not normalized_ids:
                 return []
             stmt = stmt.where(Employee.id.in_(normalized_ids))
-        rows = self._db.execute(stmt).all()
+        rows = self._report_execute(stmt).all()
         if not rows:
             return []
 
@@ -1017,7 +1022,7 @@ class AnalyticsService:
                 return []
             employee_stmt = employee_stmt.where(Employee.id.in_(normalized_ids))
 
-        employee_rows = self._db.execute(employee_stmt).all()
+        employee_rows = self._report_execute(employee_stmt).all()
         if campus is not None:
             # Hours belong to the person, not to each of their departments.
             unique_rows = {}
@@ -1029,7 +1034,7 @@ class AnalyticsService:
 
         employee_id_list = [int(row.employee_id) for row in employee_rows]
 
-        event_rows = self._db.execute(
+        event_rows = self._report_execute(
             select(
                 AttendanceEvent.employee_id,
                 AttendanceEvent.fecha,
@@ -1285,7 +1290,7 @@ class AnalyticsService:
             window_start = max(window_start, REPORT_YEAR_START)
             stmt = stmt.where(AttendanceEvent.fecha >= window_start)
         stmt = stmt.order_by(AttendanceEvent.employee_id, AttendanceEvent.fecha.desc())
-        raw_rows = self._db.execute(stmt).all()
+        raw_rows = self._report_execute(stmt).all()
         if not raw_rows:
             return {employee_id: [] for employee_id in ids}
         entry_rows = [
@@ -1382,7 +1387,7 @@ class AnalyticsService:
             .order_by(func.count().desc())
             .limit(1)
         )
-        peak_row = self._db.execute(peak_stmt).first()
+        peak_row = self._report_execute(peak_stmt).first()
         devices_stmt = (
             select(func.count(func.distinct(AttendanceEvent.device_serial)))
             .select_from(AttendanceEvent)
@@ -1390,7 +1395,7 @@ class AnalyticsService:
             .where(AttendanceEvent.fecha == day)
             .where(_campus_filter_clause())
         )
-        device_count = self._db.scalar(devices_stmt) or 0
+        device_count = self._report_execute(devices_stmt).scalar() or 0
 
         campus_day = defaultdict(lambda: {"on_time": 0, "late": 0})
         for entry in daily_entries:
