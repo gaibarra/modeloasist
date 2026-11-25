@@ -29,7 +29,9 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
                 else:
                     intervals.append([start, end])
             rest = day.is_official_holiday and not day.holiday_work_authorized
-            contracted = 0 if rest else sum(end - start for start, end in intervals)
+            # Planned hours include official rest days; authorization only changes
+            # the effective blocks and attendance/credit rules.
+            contracted = sum(end - start for start, end in intervals)
             complete = (day.total_events >= 2 and day.first_event is not None
                         and day.last_event is not None and day.last_event > day.first_event)
             worked = None
@@ -39,7 +41,7 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
                              for left, right in zip(intervals, intervals[1:]))
                 worked = max(0, last - first - breaks)
             full_exemption = day.exempt_entry and day.exempt_exit
-            credit_schedule = full_exemption and (
+            credit_schedule = full_exemption and not rest and (
                 not complete or day.exemption_reason == "fuerza_mayor"
             )
             credited = max(0, contracted - (worked or 0)) if credit_schedule else 0
@@ -53,7 +55,7 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
                 "total_events": day.total_events,
                 "justified": day.exempt_entry or day.exempt_exit,
                 "exemption_reason": day.exemption_reason,
-                "official_holiday": day.official_holiday_name if rest else None,
+                "official_holiday": (day.official_holiday_name or "Descanso oficial") if rest else None,
                 "incomplete": day.total_events > 0 and not complete and not credited,
                 "schedule": day.schedule_intervals,
                 "first_event": day.first_event,
@@ -70,7 +72,7 @@ def summarize_weekly_hours(rows: list[StaffMobilePeriodRow]) -> list[dict]:
             "difference_seconds": worked - contracted,
             "justified_days": sum(day["justified"] for day in days),
             "incomplete_days": sum(day["incomplete"] for day in days),
-            "unmeasured_days": sum(day["contracted_seconds"] > 0 and day["worked_seconds"] is None for day in days),
+            "unmeasured_days": sum(day["contracted_seconds"] > 0 and day["worked_seconds"] is None and not day["official_holiday"] for day in days),
             "days": days,
         })
     return result

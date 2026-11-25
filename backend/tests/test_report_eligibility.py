@@ -11,6 +11,13 @@ from fastapi import HTTPException
 from tests.test_campus_hours import client, authorize  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def second_employee_has_schedule(db):
+    from app.models import StaffSemesterSchedule
+    db.add(StaffSemesterSchedule(employee_id=2, academic_year=2026, semester=2))
+    db.commit()
+
+
 @pytest.mark.parametrize('label', ['BAJAS', 'Bájas_Nómina', 'Escuela Modelo / BAJAS-NOMINA', 'cme-bajas'])
 def test_label_normalization(label):
     assert is_baja_label(label)
@@ -25,6 +32,8 @@ def test_not_global_exclusions(label):
 def test_historical_reports_and_reactivation(db, location):
     employee = db.get(Employee, 1)
     employee.email = 'ana@example.com'
+    from app.models import StaffSemesterSchedule
+    db.add(StaffSemesterSchedule(employee_id=1, academic_year=2026, semester=2))
     employee.departamento, employee.campus = 'CME-DTI', 'Mérida'
     day = date(2026, 8, 3)
     db.add(AttendanceEvent(id=1, employee_id=1, nombre=employee.nombre, fecha=day, tiempo=time(7), event_ts=datetime(2026, 8, 3, 7)))
@@ -59,6 +68,8 @@ def test_mixed_assignment_rejected_and_exclusive_baja_saved(db):
     db.add(Department(id=99, code='bajas', name='BAJAS', campus='BAJAS')); db.commit()
     employee = db.get(Employee, 1)
     employee.email = 'ana@example.com'
+    from app.models import StaffSemesterSchedule
+    db.add(StaffSemesterSchedule(employee_id=1, academic_year=2026, semester=2))
     payload = dict(nombre=employee.nombre, email=employee.email, department_ids=[3, 99], primary_department_id=99)
     with pytest.raises(HTTPException) as exc:
         save(db, employee, EmployeeWrite(**payload))
@@ -123,3 +134,44 @@ def test_edit_baja_preserves_imported_placeholder_and_rejects_mixed_payload(db, 
     assert result.json()['is_departed']
     result = client.put('/employees/manage/1', json=payload | {'department_ids': [3], 'primary_department_id': 3})
     assert result.status_code == 200 and not result.json()['is_departed']
+
+
+def test_missing_contract_and_schedule_excluded_even_with_email(db, client):
+    from app.services.report_eligibility import incomplete_employee_ids, departure_snapshot
+    authorize(db, 'gaibarra@hotmail.com')
+    assert incomplete_employee_ids(db) == [1]
+    assert departure_snapshot(db)[0] == []
+    assert not serialize(db.get(Employee, 1))['is_departed']
+    for path, params in [('/staff/mobile/employees', {'department_id':3}),
+                         ('/staff/campus-hours', {'campus':'Mérida','start_date':'2026-10-05','end_date':'2026-10-11'}),
+                         ('/staff/weekly-hours', {'department_id':3,'start_date':'2026-10-05','end_date':'2026-10-11'})]:
+        result=client.get(path,params=params)
+        assert result.status_code == 200, result.text
+        data=result.json()
+        assert (data if isinstance(data,list) else data['rows']) == []
+    assert client.get('/employees/manage',params={'q':'PÉREZ'}).json()['total']==1
+    before=eligibility_snapshot(db)[1]
+    db.get(Employee,1).email='ana@example.com';db.commit()
+    assert incomplete_employee_ids(db)==[1]
+    from app.models import StaffSemesterSchedule
+    db.add(StaffSemesterSchedule(employee_id=1,academic_year=2026,semester=2));db.commit()
+    assert eligibility_snapshot(db)[0]==[]
+    assert eligibility_snapshot(db)[1]!=before
+
+
+@pytest.mark.parametrize('kind',['semester','legacy','contract','campus_contract'])
+def test_any_schedule_or_active_contract_prevents_incomplete_exclusion(db,kind):
+    from app.models import StaffSemesterSchedule, Schedule, LaborContract, CampusLaborContract, LaborContractImport
+    from app.services.report_eligibility import incomplete_employee_ids
+    assert incomplete_employee_ids(db)==[1]
+    if kind=='semester':
+        db.add(StaffSemesterSchedule(employee_id=1,academic_year=2025,semester=1))
+    elif kind=='legacy':
+        db.add(Schedule(id=99,employee_id=1,nombre='Ana',inicio=time(7),fin=time(15)))
+    else:
+        receipt=LaborContractImport(source_sha256='a'*64,request_sha256='b'*64,source_name='test',staff_user_id=10,audit={})
+        db.add(receipt);db.flush()
+        fields=dict(employee_id=1,valid_from=date(2026,8,1),valid_until=date(2026,12,31),source_sheet='test',source_row=2,import_id=receipt.id,active=True)
+        db.add(LaborContract(**fields,weekly_minutes=2400) if kind=='contract' else CampusLaborContract(**fields,campus_code='CME',weekly_minutes=None))
+    db.commit()
+    assert incomplete_employee_ids(db)==[]

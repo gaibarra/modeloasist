@@ -20,7 +20,7 @@ def is_baja_department(department) -> bool:
     return any(is_baja_label(getattr(department, key, None)) for key in ('name', 'code', 'campus'))
 
 
-def eligibility_snapshot(db):
+def departure_snapshot(db):
     employees = list(db.execute(select(Employee.id, Employee.nombre, Employee.email, Employee.departamento, Employee.campus).order_by(Employee.id)))
     links = list(db.execute(select(EmployeeDepartment.employee_id, EmployeeDepartment.department_id,
         EmployeeDepartment.is_primary, Department.name, Department.code, Department.campus)
@@ -32,6 +32,29 @@ def eligibility_snapshot(db):
     fingerprint = hashlib.sha256(repr((str(db.get_bind().url), employees, links)).encode()).hexdigest()
     return sorted(excluded), fingerprint
 
+
+
+def incomplete_employee_ids(db):
+    """Missing both an active contract and any stored schedule excludes reports.
+    Email is irrelevant; a pending contract still is a contract.
+
+    Any stored schedule (including another semester) prevents exclusion.
+    Attendance marks alone do not complete the employee's administrative profile.
+    """
+    from app.models import LaborContract, CampusLaborContract, Schedule, StaffSemesterSchedule
+    query = select(Employee.id)
+    for model in (LaborContract, CampusLaborContract):
+        query = query.where(~select(model.id).where(model.employee_id == Employee.id, model.active.is_(True)).exists())
+    for model in (Schedule, StaffSemesterSchedule):
+        query = query.where(~select(model.id).where(model.employee_id == Employee.id).exists())
+    return sorted(db.scalars(query))
+
+
+def eligibility_snapshot(db):
+    departed, state = departure_snapshot(db)
+    incomplete = incomplete_employee_ids(db)
+    # Changes to contracts/schedules invalidate report caches when eligibility changes.
+    return sorted(set(departed) | set(incomplete)), hashlib.sha256(repr((state, incomplete)).encode()).hexdigest()
 
 def report_employee_clause(db):
     return Employee.id.not_in(eligibility_snapshot(db)[0])

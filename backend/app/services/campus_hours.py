@@ -50,7 +50,7 @@ def campus_report(db, analytics, campus, start, end):
     excluded, departments = report_departments(db, [r['employee_id'] for r in summaries], campus)
     rows = []
     for row, original in zip(summaries, attendance):
-        if row['employee_id'] in excluded:
+        if row['employee_id'] in excluded or row['labor_contract_seconds'] is None:
             continue
         notes = []
         if row["labor_contract_seconds"] is None:

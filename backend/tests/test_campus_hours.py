@@ -16,6 +16,28 @@ START, END = date(2026, 10, 5), date(2026, 10, 11)
 QUERY = {"campus": "Mérida", "start_date": str(START), "end_date": str(END)}
 
 
+def add_report_contract(db, employee_id):
+    from app.models import LaborContract, LaborContractImport
+    from sqlalchemy import select
+    key=('fixture'+str(employee_id)).ljust(64,'x')
+    receipt=db.scalar(select(LaborContractImport).where(LaborContractImport.request_sha256==key))
+    if receipt is None:
+        receipt=LaborContractImport(source_sha256=str(employee_id).zfill(64),request_sha256=key,source_name='fixture',staff_user_id=10,audit={})
+        db.add(receipt);db.flush()
+    db.query(LaborContract).filter(LaborContract.employee_id==employee_id).delete()
+    db.add(LaborContract(employee_id=employee_id,valid_from=date(2026,1,1),valid_until=date(2026,12,31),weekly_minutes=2400,source_sheet='fixture',source_row=1,import_id=receipt.id,active=True))
+
+
+@pytest.fixture(autouse=True)
+def reportable_employee(db):
+    # Campus behavior is exercised with a complete contractual reference.
+    add_report_contract(db, 1)
+    from app.models import StaffSemesterSchedule
+    db.add(StaffSemesterSchedule(employee_id=1,academic_year=2025,semester=1))
+    db.get(Employee, 1).email = 'ana@example.com'
+    db.commit()
+
+
 @pytest.fixture
 def client(db):
     previous = app.dependency_overrides.copy()
@@ -42,7 +64,7 @@ def test_authorized_report_and_export_without_department_scope(db, client, email
     row = result.json()["rows"][0]
     assert row["employee_id"] == 1
     assert row["worked_seconds"] == 0
-    assert row["labor_contract_seconds"] is None
+    assert row["labor_contract_seconds"] == 40 * 3600
     assert "Sin checadas" in row["observations"]
     assert "days" not in row and "employee_email" not in row
     csv = client.get("/staff/campus-hours", params=QUERY | {"export": True})
@@ -82,11 +104,14 @@ def test_campus_deduplicates_and_includes_no_events_in_alphabetical_order(db):
         EmployeeDepartment(employee_id=3, department_id=3, is_primary=True),
         EmployeeDepartment(employee_id=2, department_id=6, is_primary=False),
     ])
+    from app.models import StaffSemesterSchedule
+    db.add(StaffSemesterSchedule(employee_id=3,academic_year=2025,semester=1))
+    add_report_contract(db, 3)
     db.commit()
     report = campus_report(db, AnalyticsService(db), "Mérida", START, END)
     assert [r["employee_id"] for r in report["rows"]] == [3, 1]
     assert report["totals"]["employees"] == 2
-    assert report["totals"]["labor_contract_seconds"] is None
+    assert report["totals"]["labor_contract_seconds"] == 80 * 3600
     assert "pendiente.local" not in report_csv(report)
     report["rows"][0]["employee_name"] = "=BAD()"
     assert "'=BAD()" in report_csv(report)
@@ -195,3 +220,25 @@ def test_justified_hours_follow_date_override_in_weekly_campus_and_csv(db, clien
     campus = client.get('/staff/campus-hours', params=QUERY).json()
     assert campus['rows'][0]['worked_seconds'] == 0
     assert 'acreditadas' not in campus['rows'][0]['observations']
+
+
+@pytest.mark.parametrize('cause',['missing','pending','partial','ambiguous'])
+def test_incomplete_reference_excluded_from_rows_totals_csv_and_weekly(db,client,cause):
+    from app.models import LaborContract
+    from sqlalchemy import select
+    authorize(db,'gaibarra@hotmail.com')
+    contract=db.scalar(select(LaborContract).where(LaborContract.employee_id==1))
+    if cause=='missing':contract.active=False
+    elif cause=='partial':contract.valid_from=date(2026,10,6)
+    elif cause=='pending':
+        from app.models import CampusLaborContract
+        db.add(CampusLaborContract(employee_id=1,campus_code='CME',valid_from=START,valid_until=END,weekly_minutes=None,source_sheet='test',source_row=1,import_id=contract.import_id,active=True))
+    else:
+        db.add(LaborContract(employee_id=1,valid_from=START,valid_until=END,weekly_minutes=1200,source_sheet='test',source_row=1,import_id=contract.import_id,active=True))
+    db.commit()
+    report=campus_report(db,AnalyticsService(db),'Mérida',START,END)
+    assert report['rows']==[]
+    assert report['totals']==dict(employees=0,labor_contract_seconds=0,scheduled_seconds=0,worked_seconds=0)
+    assert 'PÉREZ' not in report_csv(report)
+    response=client.get('/staff/weekly-hours',params={'department_id':3,'start_date':str(START),'end_date':str(END)})
+    assert response.status_code==200 and response.json()['rows']==[]

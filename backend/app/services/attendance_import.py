@@ -693,8 +693,8 @@ class AttendanceImportService:
             employee.id: employee
             for employee in self._db.query(Employee).filter(Employee.id.in_(employee_ids)).all()
         }
-        from app.services.report_eligibility import eligibility_snapshot
-        departed_ids = set(eligibility_snapshot(self._db)[0])
+        from app.services.report_eligibility import departure_snapshot
+        departed_ids = set(departure_snapshot(self._db)[0])
         auto_created: list[AttendanceImportAutoCreatedEmployee] = []
         rows_by_employee: dict[int, ParsedAttendanceRow] = {}
         for row in rows:

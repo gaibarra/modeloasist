@@ -64,7 +64,7 @@ def test_home_office_credits_effective_schedule_without_marks():
 
 
 def test_holiday_and_authorized_shift():
-    assert summarize(is_official_holiday=True)["contracted_seconds"] == 0
+    assert summarize(is_official_holiday=True)["contracted_seconds"] == 8 * 3600
     assert summarize(is_official_holiday=True, holiday_work_authorized=True)["contracted_seconds"] == 8 * 3600
 
 
@@ -76,6 +76,13 @@ def test_events_without_schedule_are_still_counted():
 
 def test_weekly_hours_api_scope_range_and_employee_access():
     seed_staff_mobile_data()
+    from tests.test_campus_hours import add_report_contract
+    with TestingSessionLocal() as db:
+        add_report_contract(db, 1)
+        db.commit()
+    with TestingSessionLocal() as db:
+        db.add(StaffSemesterSchedule(employee_id=1,academic_year=2025,semester=1))
+        db.commit()
     with TestClient(app) as client:
         headers = auth_headers(client)
         query = {"department_id": 3, "start_date": "2026-03-23", "end_date": "2026-03-29"}
@@ -93,9 +100,17 @@ def test_weekly_hours_api_scope_range_and_employee_access():
 
 def test_api_includes_unrecorded_employees_and_effective_override_without_writes():
     seed_staff_mobile_data()
+    from tests.test_campus_hours import add_report_contract
+    with TestingSessionLocal() as db:
+        add_report_contract(db, 1)
+        db.commit()
+    with TestingSessionLocal() as db:
+        db.add(StaffSemesterSchedule(employee_id=1,academic_year=2025,semester=1))
+        db.commit()
     with TestingSessionLocal() as db:
         db.add(Employee(id=2, nombre="Zulema Sin Marcas", departamento="Escuela Modelo/Montejo/MTJ-Contabilidad", email="zulema@example.com"))
         db.add(EmployeeDepartment(employee_id=2, department_id=3, is_primary=True))
+        add_report_contract(db, 2)
         base = StaffSemesterSchedule(employee_id=2, academic_year=2026, semester=1)
         base.intervals = [StaffSemesterScheduleInterval(weekday=0, start=time(7), end=time(15))]
         override = StaffScheduleDateOverride(employee_id=2, target_date=date(2026, 3, 23))
@@ -181,3 +196,18 @@ def test_partial_force_majeure_does_not_credit_full_day():
                     exempt_entry=True, exemption_reason="fuerza_mayor")
     assert row["worked_seconds"] == 2 * 3600 + 49 * 60
     assert row["credited_seconds"] == 0
+
+
+def test_official_rest_counts_planned_hours_without_inventing_work_or_missing_alert():
+    row = summarize(is_official_holiday=True, official_holiday_name="Descanso oficial", total_events=0, first_event=None, last_event=None)
+    assert row["contracted_seconds"] == 8 * 3600
+    assert row["worked_seconds"] == row["credited_seconds"] == 0
+    assert row["unmeasured_days"] == 0
+    assert row["days"][0]["official_holiday"] == "Descanso oficial"
+
+
+def test_official_rest_without_schedule_stays_zero_and_authorized_blocks_apply():
+    assert summarize(is_official_holiday=True, schedule_intervals=[])["contracted_seconds"] == 0
+    row = summarize(is_official_holiday=True, holiday_work_authorized=True,
+                    schedule_intervals=[StaffScheduleInterval(start=time(9), end=time(13))])
+    assert row["contracted_seconds"] == 4 * 3600

@@ -195,6 +195,9 @@ def test_multiple_departments_keep_same_person_hours(db, source):
 
 
 def test_report_api_scope_and_export(db):
+    db.add(StaffSemesterSchedule(employee_id=1,academic_year=2026,semester=2))
+    db.get(Employee, 1).email = "ana@example.com"
+    db.commit()
     old = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[require_staff_actor] = lambda: AuthenticatedActor(actor_type="staff", is_admin=False, must_change_password=False, department_ids={3})
@@ -286,3 +289,19 @@ def test_schema_migration_on_isolated_database():
             migration.downgrade()
             assert not inspect(conn).get_table_names()
     engine.dispose()
+
+
+def test_contract_exclusion_reasons_match_selection():
+    from app.services.labor_contracts import incomplete_contract_reasons
+    start,end=date(2026,11,23),date(2026,11,29)
+    def contract(**kw):
+        return SimpleNamespace(**(dict(active=True,valid_from=date(2026,8,1),valid_until=date(2026,12,31),weekly_minutes=2400)|kw))
+    assert incomplete_contract_reasons([],start,end,'MTJ')==['Sin contrato activo registrado']
+    assert incomplete_contract_reasons([contract()],start,end,'MTJ')==[]
+    assert 'pendientes' in incomplete_contract_reasons([contract(weekly_minutes=None)],start,end,'MTJ')[0]
+    assert 'ambigua' in incomplete_contract_reasons([contract(),contract()],start,end,'MTJ')[0]
+    assert 'vigencia parcial' in incomplete_contract_reasons([contract(valid_from=date(2026,11,25))],start,end,'MTJ')[0]
+    assert 'campus' in incomplete_contract_reasons([contract(campus_code='CME')],start,end,'MTJ')[0]
+    # Explicit pending campus reference must not fall back to the complete legacy one.
+    assert incomplete_contract_reasons([contract(),contract(campus_code='MTJ',weekly_minutes=None)],start,end,'MTJ')==['Horas contratadas pendientes de definir']
+    assert incomplete_contract_reasons([contract(weekly_minutes=0)],start,end,'MTJ')==[]

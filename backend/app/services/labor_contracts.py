@@ -55,6 +55,32 @@ def covering_contract(contracts, start, end, campus=None):
     return matches[0] if len(matches) == 1 else None
 
 
+
+def incomplete_contract_reasons(contracts, start, end, campus=None):
+    """Explain the same selection rules used by covering_contract, without writes."""
+    contract = covering_contract(contracts, start, end, campus)
+    if contract is not None:
+        return ['Horas contratadas pendientes de definir'] if contract.weekly_minutes is None else []
+    code = CAMPUS_CODES.get(campus, campus)
+    active = [c for c in contracts if c.active]
+    scoped = [c for c in active if getattr(c, 'campus_code', None) == code and code is not None
+              and c.valid_from <= end and c.valid_until >= start]
+    pool = scoped if scoped else [c for c in active if not getattr(c, 'campus_code', None)]
+    if not active:
+        return ['Sin contrato activo registrado']
+    if not pool:
+        return ['Sin contrato aplicable al campus y semana seleccionados']
+    covering = [c for c in pool if c.valid_from <= start and c.valid_until >= end]
+    reasons = []
+    if len(covering) > 1:
+        reasons.append('Múltiples contratos activos cubren la semana: referencia ambigua')
+    else:
+        reasons.append('Ningún contrato único cubre toda la semana (vigencia parcial o fuera de periodo)')
+    if any(c.weekly_minutes is None for c in pool):
+        reasons.append('Hay contratos con horas pendientes de definir')
+    return reasons
+
+
 def comparison(contract_minutes, scheduled_minutes):
     if contract_minutes is None:
         return "pending_contract"
